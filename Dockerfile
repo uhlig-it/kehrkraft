@@ -14,10 +14,11 @@ COPY . .
 RUN cargo build --release
 
 # ----- Runtime stage -----
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN useradd -m -u 10001 appuser
 COPY --from=builder /app/target/release/kehrkraft /usr/local/bin/kehrkraft
 ENV RUST_LOG=info
+ENV PORT=3000
 USER appuser
-EXPOSE 3000
+EXPOSE ${PORT}
 CMD ["/usr/local/bin/kehrkraft"]

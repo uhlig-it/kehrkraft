@@ -12,6 +12,13 @@ Kehrkraft is a web application that generates downloadable PDF calendars showing
 $ PORT=3000 RUST_LOG=info cargo watch -x "run"
 ```
 
+Using docker:
+
+```command
+$ docker buildx build --tag kehrkraft:latest --load .
+$ docker run --interactive --tty --rm --publish 3000:3000 kehrkraft
+```
+
 # Implementation
 
 - Admin pages use a PicoCSS-based master template.

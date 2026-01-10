@@ -34,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     let actual_addr = listener.local_addr()?;
-    tracing::info!("Kehrkraft listening on http://{}", actual_addr);
+    tracing::info!("Kehrkraft server listening on http://{}", actual_addr);
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
