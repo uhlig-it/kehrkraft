@@ -16,7 +16,7 @@ Using docker:
 
 ```command
 $ docker buildx build --tag kehrkraft:latest --load .
-$ docker run --interactive --tty --rm --publish 3000:3000 kehrkraft
+$ docker run --interactive --tty --rm --env PORT=3000 --publish 3000:3000 kehrkraft
 ```
 
 # Implementation
@@ -219,3 +219,7 @@ Repository structure (evolves with milestones):
 - Testing DB: For sqlite::memory:, ensure at least one connection stays open for the pool lifetime so the DB persists within a test.
 - Error handling: Map domain errors to 4xx/5xx; admin pages show friendly error templates.
 - Internationalization: Keep strings ready for EN/DE; "Kehrwoche" as canonical term.
+
+## License
+
+Licensed under either of MIT or Apache-2.0, at your option.
