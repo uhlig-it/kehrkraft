@@ -9,7 +9,7 @@ Kehrkraft is a web application that generates downloadable PDF calendars showing
 # Develop
 
 ```command
-$ PORT=3000 RUST_LOG=info cargo watch -x "run"
+$ PORT=3000 RUST_LOG=info ADMIN_USER=admin ADMIN_PASS=secret cargo watch -x "run"
 ```
 
 Using docker:

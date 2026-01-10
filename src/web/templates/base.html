@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Kehrkraft{% endblock %}</title>
+    <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@2/css/pico.min.css">
+  </head>
+  <body>
+    <main class="container">
+      <header>
+        <h1>{% block header %}Kehrkraft{% endblock %}</h1>
+      </header>
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>

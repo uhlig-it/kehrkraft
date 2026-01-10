@@ -15,3 +15,9 @@ pub fn port_from_env() -> Option<u16> {
         Err(_) => None,
     }
 }
+
+pub fn admin_credentials_from_env() -> Result<(String, String), std::env::VarError> {
+    let user = env::var("ADMIN_USER")?;
+    let pass = env::var("ADMIN_PASS")?;
+    Ok((user, pass))
+}

@@ -1,7 +1,12 @@
 mod config;
 mod db;
+mod web;
 
 use axum::{routing::get, Router};
+use axum::{extract::State, middleware, middleware::Next};
+use axum::http::{header, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
+use base64::Engine as _;
 use std::net::SocketAddr;
 use tracing_subscriber::EnvFilter;
 
@@ -24,6 +29,37 @@ async fn shutdown_signal() {
     }
 }
 
+async fn require_basic_auth(
+    State((expected_user, expected_pass)): State<(String, String)>,
+    req: axum::http::Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let unauthorized = || {
+        let mut res = (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+        res.headers_mut().insert(
+            header::WWW_AUTHENTICATE,
+            HeaderValue::from_static("Basic realm=\"Admin\""),
+        );
+        res
+    };
+
+    let auth = req.headers().get(header::AUTHORIZATION).and_then(|v| v.to_str().ok());
+    if let Some(auth) = auth {
+        if let Some(b64) = auth.strip_prefix("Basic ") {
+            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(b64) {
+                if let Ok(decoded_str) = std::str::from_utf8(&decoded) {
+                    if let Some((user, pass)) = decoded_str.split_once(':') {
+                        if user == expected_user && pass == expected_pass {
+                            return next.run(req).await;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unauthorized()
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
@@ -32,9 +68,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = db::connect_pool().await?;
     db::migrate(&pool).await?;
 
+    // Admin: Basic Auth from env, required
+    let (admin_user, admin_pass) = config::admin_credentials_from_env()
+        .map_err(|_| "ADMIN_USER and ADMIN_PASS must be set")?;
+    let admin_router = Router::new()
+        .route("/admin", get(web::admin::dashboard))
+        .route_layer(middleware::from_fn_with_state((admin_user, admin_pass), require_basic_auth));
+
     // Build router and hold pool in state (so it lives for app lifetime)
     let app = Router::new()
         .route("/healthz", get(healthz))
+        .merge(admin_router)
         .with_state(pool.clone());
 
     let port_opt = config::port_from_env();
