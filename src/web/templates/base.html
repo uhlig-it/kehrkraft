@@ -5,13 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Kehrkraft{% endblock %}</title>
     <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@2/css/pico.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400..900&display=swap" rel="stylesheet">
+    <style>
+    .orbitron-bold {
+      font-family: "Orbitron", sans-serif;
+      font-optical-sizing: auto;
+      font-weight: 700;
+      font-style: normal;
+      color: #444f57;
+    }
+    </style>
   </head>
   <body>
     <main class="container">
       <header>
-        <h1>
-          <img src="/kehrkraft.svg" alt="Kehrkraft logo" style="height: 7rem; width: auto; margin-right: .5rem; vertical-align: middle;">
-          {% block header %}Kehrkraft{% endblock %}
+        <h1 class="orbitron-bold" style="margin-left: -30px;">
+          <img src="/kehrkraft.svg" alt="Kehrkraft logo" style="height: 7rem; vertical-align: middle;">
+          <span style="margin-left: -30px;">
+            {% block header %}Kehrkraft{% endblock %}
+          </span>
         </h1>
       </header>
       {% block content %}{% endblock %}
