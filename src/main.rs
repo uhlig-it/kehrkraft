@@ -25,8 +25,6 @@ async fn shutdown_signal() {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Load .env if present (development convenience)
-    let _ = dotenvy::dotenv();
     init_tracing();
 
     let app = Router::new().route("/healthz", get(healthz));
