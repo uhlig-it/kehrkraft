@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<h1>Tenants</h1>
+
+<p>
+  <a href="/admin/plans/{{ plan_id }}/tenants/new">Add Tenant</a>
+  &nbsp;|&nbsp;
+  <a href="/admin/plans/{{ plan_id }}">Back to Plan</a>
+</p>
+
+{% if tenants.len() == 0 %}
+<p>No tenants yet.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Email</th>
+      <th>Start Date</th>
+      <th>End Date</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for t in tenants %}
+    <tr>
+      <td>{{ t.name }}</td>
+      <td>{{ t.email }}</td>
+      <td>{{ t.start_date }}</td>
+      <td>{% if t.end_date.is_some() %}{{ t.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
+      <td>
+        <a href="/admin/plans/{{ plan_id }}/tenants/{{ t.id }}/edit">Edit</a>
+        <form method="post" action="/admin/plans/{{ plan_id }}/tenants/{{ t.id }}/delete" style="display:inline">
+          <button type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

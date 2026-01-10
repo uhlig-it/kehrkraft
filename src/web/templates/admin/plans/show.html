@@ -25,6 +25,10 @@
   <a href="/admin/plans">Back to Plans</a>
 </p>
 
+<p>
+  <a href="/admin/plans/{{ plan.id }}/tenants">Manage Tenants</a>
+</p>
+
 <form method="post" action="/admin/plans/{{ plan.id }}/delete">
   <button type="submit">Delete Plan</button>
 </form>

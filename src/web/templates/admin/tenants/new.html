@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<h1>New Tenant</h1>
+
+<form method="post" action="/admin/plans/{{ plan_id }}/tenants">
+  <label>
+    Name
+    <input type="text" name="name" required />
+  </label>
+
+  <label>
+    Email
+    <input type="email" name="email" required />
+  </label>
+
+  <label>
+    Tenancy Start Date
+    <input type="date" name="start_date" required />
+  </label>
+
+  <label>
+    Tenancy End Date (optional)
+    <input type="date" name="end_date" />
+  </label>
+
+  <button type="submit">Create Tenant</button>
+  <a href="/admin/plans/{{ plan_id }}/tenants">Cancel</a>
+</form>
+{% endblock %}

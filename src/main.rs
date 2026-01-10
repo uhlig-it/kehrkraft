@@ -86,6 +86,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/admin/plans/new", get(web::admin::plans_new))
         .route("/admin/plans/:id", get(web::admin::plans_show))
         .route("/admin/plans/:id/delete", post(web::admin::plans_delete))
+        .route("/admin/plans/:id/tenants", get(web::admin::tenants_index).post(web::admin::tenants_create))
+        .route("/admin/plans/:id/tenants/new", get(web::admin::tenants_new))
+        .route("/admin/plans/:id/tenants/:tenant_id/edit", get(web::admin::tenants_edit))
+        .route("/admin/plans/:id/tenants/:tenant_id", post(web::admin::tenants_update))
+        .route("/admin/plans/:id/tenants/:tenant_id/delete", post(web::admin::tenants_delete))
         .route_layer(middleware::from_fn_with_state(
             (admin_user, admin_pass),
             require_basic_auth,

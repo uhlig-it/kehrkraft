@@ -16,3 +16,14 @@ pub struct PlanAdministrator {
     pub email: String,
     pub created_at: String,
 }
+
+#[derive(sqlx::FromRow, Debug, Clone)]
+pub struct Tenant {
+    pub id: String,
+    pub plan_id: String,
+    pub name: String,
+    pub email: String,
+    pub start_date: String,
+    pub end_date: Option<String>,
+    pub created_at: String,
+}
