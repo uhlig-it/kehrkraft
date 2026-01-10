@@ -1,5 +1,5 @@
-use std::env;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use std::env;
 
 pub type Db = SqlitePool;
 
@@ -19,7 +19,9 @@ pub async fn connect_pool() -> Result<SqlitePool, sqlx::Error> {
     let pool = opts.connect(&url).await?;
 
     // Best-effort: enable foreign keys for connections from this pool.
-    let _ = sqlx::query("PRAGMA foreign_keys = ON;").execute(&pool).await;
+    let _ = sqlx::query("PRAGMA foreign_keys = ON;")
+        .execute(&pool)
+        .await;
 
     Ok(pool)
 }
