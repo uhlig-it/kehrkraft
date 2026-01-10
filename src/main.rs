@@ -1,4 +1,5 @@
 mod config;
+mod db;
 
 use axum::{routing::get, Router};
 use std::net::SocketAddr;
@@ -27,7 +28,14 @@ async fn shutdown_signal() {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
 
-    let app = Router::new().route("/healthz", get(healthz));
+    // Initialize database pool and run migrations
+    let pool = db::connect_pool().await?;
+    db::migrate(&pool).await?;
+
+    // Build router and hold pool in state (so it lives for app lifetime)
+    let app = Router::new()
+        .route("/healthz", get(healthz))
+        .with_state(pool.clone());
 
     let port_opt = config::port_from_env();
     let bind_addr = SocketAddr::from(([0, 0, 0, 0], port_opt.unwrap_or(0)));
