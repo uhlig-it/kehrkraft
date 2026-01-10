@@ -22,10 +22,12 @@
     <main class="container">
       <header>
         <h1 class="orbitron-bold" style="margin-left: -30px;">
-          <img src="/kehrkraft.svg" alt="Kehrkraft logo" style="height: 7rem; vertical-align: middle;">
-          <span style="margin-left: -30px;">
-            {% block header %}Kehrkraft{% endblock %}
-          </span>
+          <a href="/" style="text-decoration: none; color: inherit;">
+            <img src="/kehrkraft.svg" alt="Kehrkraft logo" style="height: 7rem; vertical-align: middle;">
+            <span style="margin-left: -30px;">
+              {% block header %}Kehrkraft{% endblock %}
+            </span>
+          </a>
         </h1>
       </header>
       {% block content %}{% endblock %}
