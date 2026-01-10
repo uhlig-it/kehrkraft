@@ -1,5 +1,13 @@
 # Kehrkraft
 
+# Develop
+
+```command
+$ PORT=3000 RUST_LOG=info cargo watch -x "run"
+```
+
+# Background
+
 Kehrkraft is a small Rust web application that generates downloadable PDF calendars showing who is responsible for Kehrwoche (stairwell cleaning) in a block of rented flats.
 
 - Each “plan” represents one block of flats, has a name, and at least one administrator (contact).
