@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<h1>{{ plan.name }}</h1>
+
+<p>
+  Public PDF URL:
+  <a href="/p/{{ plan.secret_slug }}/kehrwoche.pdf">/p/{{ plan.secret_slug }}/kehrwoche.pdf</a>
+</p>
+
+<h2>Administrators</h2>
+{% if admins.len() == 0 %}
+<p>No administrators.</p>
+{% else %}
+<ul>
+  {% for a in admins %}
+    <li>{{ a.name }} &lt;{{ a.email }}&gt;</li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<p>
+  <a href="/admin/plans">Back to Plans</a>
+</p>
+
+<form method="post" action="/admin/plans/{{ plan.id }}/delete">
+  <button type="submit">Delete Plan</button>
+</form>
+{% endblock %}

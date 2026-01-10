@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}New Plan{% endblock %}
+
+{% block content %}
+<h1>Create a New Plan</h1>
+
+<form method="post" action="/admin/plans">
+  <label>
+    Plan Name
+    <input type="text" name="name" required>
+  </label>
+
+  <fieldset>
+    <legend>Administrator (Contact)</legend>
+    <label>
+      Name
+      <input type="text" name="admin_name" required>
+    </label>
+    <label>
+      Email
+      <input type="email" name="admin_email" required>
+    </label>
+  </fieldset>
+
+  <button type="submit">Create Plan</button>
+  <a href="/admin/plans">Cancel</a>
+</form>
+{% endblock %}

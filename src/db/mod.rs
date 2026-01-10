@@ -3,6 +3,9 @@ use std::env;
 
 pub type Db = SqlitePool;
 
+pub mod models;
+pub mod queries;
+
 /// Create a SQLite connection pool.
 /// Defaults to sqlite:kehrkraft.db when DATABASE_URL is unset.
 /// For sqlite::memory:, restrict to a single connection so the DB persists.

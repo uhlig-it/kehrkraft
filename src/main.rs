@@ -5,7 +5,7 @@ mod web;
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{extract::State, middleware, middleware::Next};
-use axum::{routing::get, Router};
+use axum::{routing::{get, post}, Router};
 use base64::Engine as _;
 use std::net::SocketAddr;
 use tracing_subscriber::EnvFilter;
@@ -82,6 +82,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|_| "ADMIN_USER and ADMIN_PASS must be set")?;
     let admin_router = Router::new()
         .route("/admin", get(web::admin::dashboard))
+        .route("/admin/plans", get(web::admin::plans_index).post(web::admin::plans_create))
+        .route("/admin/plans/new", get(web::admin::plans_new))
+        .route("/admin/plans/:id", get(web::admin::plans_show))
+        .route("/admin/plans/:id/delete", post(web::admin::plans_delete))
         .route_layer(middleware::from_fn_with_state(
             (admin_user, admin_pass),
             require_basic_auth,
