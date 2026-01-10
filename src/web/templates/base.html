@@ -9,7 +9,10 @@
   <body>
     <main class="container">
       <header>
-        <h1>{% block header %}Kehrkraft{% endblock %}</h1>
+        <h1>
+          <img src="/kehrkraft.svg" alt="Kehrkraft logo" style="height: 7rem; width: auto; margin-right: .5rem; vertical-align: middle;">
+          {% block header %}Kehrkraft{% endblock %}
+        </h1>
       </header>
       {% block content %}{% endblock %}
     </main>

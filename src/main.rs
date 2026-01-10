@@ -2,16 +2,22 @@ mod config;
 mod db;
 mod web;
 
-use axum::{routing::get, Router};
-use axum::{extract::State, middleware, middleware::Next};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
+use axum::{extract::State, middleware, middleware::Next};
+use axum::{routing::get, Router};
 use base64::Engine as _;
 use std::net::SocketAddr;
 use tracing_subscriber::EnvFilter;
 
 async fn healthz() -> &'static str {
     "ok"
+}
+
+static KEHRKRAFT_SVG: &[u8] = include_bytes!("../kehrkraft.svg");
+
+async fn logo_svg() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "image/svg+xml")], KEHRKRAFT_SVG)
 }
 
 fn init_tracing() {
@@ -43,7 +49,10 @@ async fn require_basic_auth(
         res
     };
 
-    let auth = req.headers().get(header::AUTHORIZATION).and_then(|v| v.to_str().ok());
+    let auth = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
     if let Some(auth) = auth {
         if let Some(b64) = auth.strip_prefix("Basic ") {
             if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(b64) {
@@ -73,12 +82,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|_| "ADMIN_USER and ADMIN_PASS must be set")?;
     let admin_router = Router::new()
         .route("/admin", get(web::admin::dashboard))
-        .route_layer(middleware::from_fn_with_state((admin_user, admin_pass), require_basic_auth));
+        .route_layer(middleware::from_fn_with_state(
+            (admin_user, admin_pass),
+            require_basic_auth,
+        ));
 
     // Build router and hold pool in state (so it lives for app lifetime)
     let app = Router::new()
         .route("/healthz", get(healthz))
         .merge(admin_router)
+        .route("/kehrkraft.svg", get(logo_svg))
         .with_state(pool.clone());
 
     let port_opt = config::port_from_env();

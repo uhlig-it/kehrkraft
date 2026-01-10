@@ -17,6 +17,8 @@ RUN cargo build --release
 FROM debian:trixie-slim
 RUN useradd -m -u 10001 appuser
 COPY --from=builder /app/target/release/kehrkraft /usr/local/bin/kehrkraft
+COPY --from=builder /app/kehrkraft.db /app/kehrkraft.db
+WORKDIR /app
 ENV RUST_LOG=info
 ENV PORT=3000
 USER appuser

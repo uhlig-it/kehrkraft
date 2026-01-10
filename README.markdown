@@ -16,7 +16,7 @@ Using docker:
 
 ```command
 $ docker buildx build --tag kehrkraft:latest --load .
-$ docker run --interactive --tty --rm --env PORT=3000 --publish 3000:3000 kehrkraft
+$ docker run --interactive --tty --rm --env PORT=3000 --env ADMIN_USER=admin --env ADMIN_PASS=secret --publish 3001:3000 kehrkraft
 ```
 
 # Implementation
