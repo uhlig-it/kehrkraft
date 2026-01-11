@@ -6,11 +6,11 @@ use axum::{
 use chrono::{Datelike, Local};
 use rand::RngCore;
 use std::path::PathBuf;
+use tokio::process::Command;
 use tokio::{
     fs,
     time::{timeout, Duration},
 };
-use tokio::process::Command;
 
 use crate::db::{queries, Db};
 use crate::scheduler;
@@ -33,7 +33,10 @@ fn sanitize_filename(s: &str) -> String {
         .collect()
 }
 
-pub async fn public_pdf(Path(secret_slug): Path<String>, State(pool): State<Db>) -> impl IntoResponse {
+pub async fn public_pdf(
+    Path(secret_slug): Path<String>,
+    State(pool): State<Db>,
+) -> impl IntoResponse {
     // Lookup plan by secret slug
     let plan = match queries::get_plan_by_slug(&pool, &secret_slug).await {
         Ok(Some(p)) => p,
@@ -45,24 +48,39 @@ pub async fn public_pdf(Path(secret_slug): Path<String>, State(pool): State<Db>)
     let year = Local::now().year();
     let schedule = match scheduler::schedule_for_year(&plan.id, year, &pool).await {
         Ok(s) => s,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to compute schedule").into_response(),
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to compute schedule",
+            )
+                .into_response()
+        }
     };
 
     // Prepare a per-request temp directory
     let mut rnd_bytes = [0u8; 8];
     rand::rngs::OsRng.fill_bytes(&mut rnd_bytes);
     let rnd = u64::from_le_bytes(rnd_bytes);
-    let tmp_dir: PathBuf = std::env::temp_dir().join(format!("kehrkraft-{}-{}", std::process::id(), rnd));
+    let tmp_dir: PathBuf =
+        std::env::temp_dir().join(format!("kehrkraft-{}-{}", std::process::id(), rnd));
 
     if let Err(_) = fs::create_dir_all(&tmp_dir).await {
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to create temp dir").into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to create temp dir",
+        )
+            .into_response();
     }
 
     // Write Typst template into temp dir
     let template = include_str!("../../assets/typst/kehrwoche.typ");
     if let Err(_) = fs::write(tmp_dir.join("kehrwoche.typ"), template).await {
         let _ = fs::remove_dir_all(&tmp_dir).await;
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to write template").into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to write template",
+        )
+            .into_response();
     }
 
     // Build rows for Typst
@@ -102,7 +120,11 @@ pub async fn public_pdf(Path(secret_slug): Path<String>, State(pool): State<Db>)
 
     if let Err(_) = fs::write(tmp_dir.join("wrapper.typ"), wrapper_src.as_bytes()).await {
         let _ = fs::remove_dir_all(&tmp_dir).await;
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to write Typst source").into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to write Typst source",
+        )
+            .into_response();
     }
 
     // Run typst compile with a timeout
@@ -150,7 +172,11 @@ pub async fn public_pdf(Path(secret_slug): Path<String>, State(pool): State<Db>)
         Ok(b) => b,
         Err(_) => {
             let _ = fs::remove_dir_all(&tmp_dir).await;
-            return (StatusCode::INTERNAL_SERVER_ERROR, "PDF not found after compile").into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "PDF not found after compile",
+            )
+                .into_response();
         }
     };
 
@@ -161,11 +187,15 @@ pub async fn public_pdf(Path(secret_slug): Path<String>, State(pool): State<Db>)
     let safe_plan = sanitize_filename(&plan.name);
     let filename = format!("Kehrwoche-{}-{}.pdf", safe_plan, year);
     let cd_val = format!("attachment; filename=\"{}\"", filename);
-    let cd = HeaderValue::from_str(&cd_val).unwrap_or_else(|_| HeaderValue::from_static("attachment"));
+    let cd =
+        HeaderValue::from_str(&cd_val).unwrap_or_else(|_| HeaderValue::from_static("attachment"));
 
     (
         [
-            (header::CONTENT_TYPE, HeaderValue::from_static("application/pdf")),
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/pdf"),
+            ),
             (header::CONTENT_DISPOSITION, cd),
         ],
         pdf_bytes,
