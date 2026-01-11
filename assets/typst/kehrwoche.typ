@@ -1,4 +1,4 @@
-#let kehrwoche(plan_name: string, year: int, rows: array) = [
+#let kehrwoche(plan_name: str, year: int, rows: array) = [
   = Kehrwoche: #plan_name (#year)
 
   #table(
