@@ -128,13 +128,19 @@ pub async fn public_pdf(Path(secret_slug): Path<String>, State(pool): State<Db>)
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
+        let wrapper = tmp_dir.join("wrapper.typ");
+        let template = tmp_dir.join("kehrwoche.typ");
+        let pdf_out = tmp_dir.join("out.pdf");
         tracing::error!(
             status = ?output.status,
             %stderr,
             %stdout,
-            "Typst compile failed"
+            tmp_dir = %tmp_dir.display(),
+            wrapper = %wrapper.display(),
+            template = %template.display(),
+            pdf_out = %pdf_out.display(),
+            "Typst compile failed; preserving temp files for inspection"
         );
-        let _ = fs::remove_dir_all(&tmp_dir).await;
         return (StatusCode::INTERNAL_SERVER_ERROR, "Typst compile failed").into_response();
     }
 
