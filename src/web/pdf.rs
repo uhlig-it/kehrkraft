@@ -126,6 +126,14 @@ pub async fn public_pdf(Path(secret_slug): Path<String>, State(pool): State<Db>)
     };
 
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        tracing::error!(
+            status = ?output.status,
+            %stderr,
+            %stdout,
+            "Typst compile failed"
+        );
         let _ = fs::remove_dir_all(&tmp_dir).await;
         return (StatusCode::INTERNAL_SERVER_ERROR, "Typst compile failed").into_response();
     }
