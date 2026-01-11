@@ -2,15 +2,14 @@
   = Kehrwoche: #plan_name (#year)
 
   #table(
-    table.header([Week], [Start], [End], [Name], [Email]),
-    columns: 5,
+    table.header([*Woche*], [vom], [bis], [Name]),
+    columns: 4,
     ..for row in rows {
       (
         [#row.week],
         [#row.start],
         [#row.end],
         [#row.name],
-        [#row.email],
       )
     },
   )
