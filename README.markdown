@@ -1,10 +1,21 @@
 # Kehrkraft
 
-Kehrkraft is a web application that generates downloadable PDF calendars showing who is responsible for Kehrwoche (stairwell cleaning) in a block of rented flats.
+Kehrkraft is a web application that generates downloadable PDF calendars showing who is responsible for Kehrwoche (stairwell cleaning) in a block of rented flats. A unique, somewhat secret URL serves a PDF for the current year, so that no login is required for viewing the plan.
 
-- Each plan represents one block of flats, has a name, and at least one administrator (contact).
-- Each tenant has a name, email, tenancy start date, and an optional end date, stored in SQLite.
-- A unique, somewhat secret URL serves a PDF for the current year (no login required for viewing the plan).
+# Domain Model
+
+- A block has a name (max. 30 chars) and description (no limit) and at least one administrator (contact).
+- A block consists of zero or more flats
+- A flat has a name (max. 30 chars) and description (no limit). Conversly, a flat belongs to a block.
+- Each flat has, at any point in time, an owner (we store name and email). Conversly, an owner might own zero or more flats.
+- Ownership of a flat has a start date, and an optional end date.
+- A flat may be rented out to a tenant. For each tenant, we store a name and email address.
+- Tenancy start date, and an optional end date.
+- At any point in time, not more than one tenacy may be active for a flat. It might happen that a tenacy ended and no new one exists (yet).
+- A plan represents the responsibility for stairwell cleaning for a block during a year. The assignment is scheduled per the following rules:
+  1. Responsibility is assigned to the owners of the flats round-robin.
+  1. Responsibility lasts one week each. It starts Monday 00:00 and ends Sunday 23:59.
+  1. If a tenacy is active for a week, the responsibility is delegated to the tenant.
 
 # Develop
 
