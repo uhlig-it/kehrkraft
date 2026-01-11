@@ -10,6 +10,7 @@ use axum::{routing::{get, post}, Router};
 use base64::Engine as _;
 use std::net::SocketAddr;
 use tracing_subscriber::EnvFilter;
+use tokio::process::Command;
 
 async fn healthz() -> &'static str {
     "ok"
@@ -33,6 +34,13 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {},
         _ = term.recv() => {},
+    }
+}
+
+async fn typst_available() -> bool {
+    match Command::new("typst").arg("--version").output().await {
+        Ok(out) => out.status.success(),
+        Err(_) => false,
     }
 }
 
@@ -74,6 +82,10 @@ async fn require_basic_auth(
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
 
+    if !typst_available().await {
+        tracing::warn!("typst CLI not found or not executable; PDF generation may fail");
+    }
+
     // Initialize database pool and run migrations
     let pool = db::connect_pool().await?;
     db::migrate(&pool).await?;
@@ -102,6 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/healthz", get(healthz))
         .merge(admin_router)
+        .route("/p/:secret_slug/kehrwoche.pdf", get(web::pdf::public_pdf))
         .route("/kehrkraft.svg", get(logo_svg))
         .with_state(pool.clone());
 

@@ -53,6 +53,19 @@ pub async fn get_plan(pool: &Db, id: &str) -> Result<Option<(Plan, Vec<PlanAdmin
     }
 }
 
+pub async fn get_plan_by_slug(pool: &Db, slug: &str) -> Result<Option<Plan>, sqlx::Error> {
+    sqlx::query_as::<_, Plan>(
+        r#"
+        SELECT id, name, secret_slug, rotation_seed, created_at, updated_at
+        FROM plans
+        WHERE secret_slug = ?
+        "#,
+    )
+    .bind(slug)
+    .fetch_optional(pool)
+    .await
+}
+
 pub async fn create_plan(
     pool: &SqlitePool,
     name: &str,
