@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<h1>Schedule Preview: {{ plan.name }} ({{ year }})</h1>
+
+<p>
+  Public PDF URL:
+  <a href="/p/{{ plan.secret_slug }}/kehrwoche.pdf">/p/{{ plan.secret_slug }}/kehrwoche.pdf</a>
+</p>
+
+<table role="grid">
+  <thead>
+    <tr>
+      <th>Week</th>
+      <th>Start</th>
+      <th>End</th>
+      <th>Assignee</th>
+      <th>Email</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for w in schedule %}
+    <tr>
+      <td>{{ w.iso_week }}</td>
+      <td>{{ w.start }}</td>
+      <td>{{ w.end }}</td>
+      <td>
+        {% match w.assignee_name %}
+          {% when Some with (n) %}{{ n }}
+          {% when None %}<em>Unassigned</em>
+        {% endmatch %}
+      </td>
+      <td>
+        {% match w.assignee_email %}
+          {% when Some with (e) %}{{ e }}
+          {% when None %}—
+        {% endmatch %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<p>
+  <a href="/admin/plans/{{ plan.id }}">Back to Plan</a>
+</p>
+{% endblock %}

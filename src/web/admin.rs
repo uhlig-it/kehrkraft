@@ -4,6 +4,8 @@ use axum::response::IntoResponse as AxumIntoResponse;
 use axum::extract::{Path, State};
 use axum::response::Redirect;
 use axum::Form;
+use crate::scheduler::{self, WeekAssignment};
+use chrono::{Datelike, Local};
 
 use crate::db::models::{Plan, PlanAdministrator, Tenant};
 use crate::db::queries;
@@ -63,6 +65,15 @@ pub struct TenantsEditTemplate {
     pub tenant: Tenant,
 }
 
+#[derive(Template)]
+#[template(path = "admin/plans/schedule.html")]
+pub struct PlansScheduleTemplate {
+    pub title: String,
+    pub plan: Plan,
+    pub year: i32,
+    pub schedule: Vec<WeekAssignment>,
+}
+
 #[derive(serde::Deserialize)]
 pub struct CreatePlanForm {
     pub name: String,
@@ -110,6 +121,37 @@ pub async fn plans_show(
             admins,
         }
         .into_response(),
+        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
+        Err(_) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to load plan",
+        )
+            .into_response(),
+    }
+}
+
+pub async fn plans_schedule(
+    Path(id): Path<String>,
+    State(pool): State<Db>,
+) -> impl axum::response::IntoResponse {
+    match queries::get_plan(&pool, &id).await {
+        Ok(Some((plan, _admins))) => {
+            let year = Local::now().date_naive().year();
+            match scheduler::schedule_for_year(&plan.id, year, &pool).await {
+                Ok(schedule) => PlansScheduleTemplate {
+                    title: format!("Schedule Preview: {}", plan.name),
+                    plan,
+                    year,
+                    schedule,
+                }
+                .into_response(),
+                Err(_) => (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to compute schedule",
+                )
+                    .into_response(),
+            }
+        }
         Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,

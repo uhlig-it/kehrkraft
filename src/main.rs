@@ -1,6 +1,7 @@
 mod config;
 mod db;
 mod web;
+mod scheduler;
 
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -85,6 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/admin/plans", get(web::admin::plans_index).post(web::admin::plans_create))
         .route("/admin/plans/new", get(web::admin::plans_new))
         .route("/admin/plans/:id", get(web::admin::plans_show))
+        .route("/admin/plans/:id/schedule", get(web::admin::plans_schedule))
         .route("/admin/plans/:id/delete", post(web::admin::plans_delete))
         .route("/admin/plans/:id/tenants", get(web::admin::tenants_index).post(web::admin::tenants_create))
         .route("/admin/plans/:id/tenants/new", get(web::admin::tenants_new))
