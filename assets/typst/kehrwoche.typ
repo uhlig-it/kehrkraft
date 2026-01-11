@@ -1,9 +1,10 @@
 #let kehrwoche(plan_name: str, year: int, rows: array) = [
   = Kehrwoche: #plan_name (#year)
-
+  #v(8pt)
   #table(
-    table.header([*Woche*], [vom], [bis], [Name]),
+    table.header([*Woche*], [*vom*], [*bis*], [*Name*]),
     columns: 4,
+    stroke: none,
     ..for row in rows {
       (
         [#row.week],
