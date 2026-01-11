@@ -1,10 +1,10 @@
+use crate::scheduler::{self, WeekAssignment};
 use askama::Template;
 use askama_axum::IntoResponse;
-use axum::response::IntoResponse as AxumIntoResponse;
 use axum::extract::{Path, State};
+use axum::response::IntoResponse as AxumIntoResponse;
 use axum::response::Redirect;
 use axum::Form;
-use crate::scheduler::{self, WeekAssignment};
 use chrono::{Datelike, Local};
 
 use crate::db::models::{Plan, PlanAdministrator, Tenant};
@@ -18,7 +18,10 @@ pub struct DashboardTemplate<'a> {
 }
 
 pub async fn dashboard() -> impl axum::response::IntoResponse {
-    DashboardTemplate { title: "Admin Dashboard" }.into_response()
+    DashboardTemplate {
+        title: "Admin Dashboard",
+    }
+    .into_response()
 }
 
 #[derive(Template)]
@@ -83,7 +86,11 @@ pub struct CreatePlanForm {
 
 pub async fn plans_index(State(pool): State<Db>) -> impl axum::response::IntoResponse {
     match queries::list_plans(&pool).await {
-        Ok(plans) => PlansIndexTemplate { title: "Plans", plans }.into_response(),
+        Ok(plans) => PlansIndexTemplate {
+            title: "Plans",
+            plans,
+        }
+        .into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             "Failed to load plans",
@@ -139,7 +146,7 @@ pub async fn plans_schedule(
             let year = Local::now().date_naive().year();
             match scheduler::schedule_for_year(&plan.id, year, &pool).await {
                 Ok(schedule) => PlansScheduleTemplate {
-                    title: format!("Schedule Preview: {}", plan.name),
+                    title: format!("Schedule Preview: {} ({})", plan.name, year),
                     plan,
                     year,
                     schedule,
@@ -185,13 +192,18 @@ pub struct UpdateTenantForm {
     pub end_date: Option<String>,
 }
 
-fn validate_tenant_input(name: &str, email: &str, start_date: &str, end_date: Option<&str>) -> Result<(), String> {
+fn validate_tenant_input(
+    name: &str,
+    email: &str,
+    start_date: &str,
+    end_date: Option<&str>,
+) -> Result<(), String> {
     if name.trim().is_empty() {
         return Err("Name must not be empty".into());
     }
     let email = email.trim();
     if let Some(at_pos) = email.find('@') {
-        if !email[at_pos+1..].contains('.') {
+        if !email[at_pos + 1..].contains('.') {
             return Err("Email must contain a dot after '@'".into());
         }
     } else {
@@ -231,9 +243,7 @@ pub async fn tenants_index(
     }
 }
 
-pub async fn tenants_new(
-    Path(plan_id): Path<String>,
-) -> impl axum::response::IntoResponse {
+pub async fn tenants_new(Path(plan_id): Path<String>) -> impl axum::response::IntoResponse {
     TenantsNewTemplate {
         title: "New Tenant".to_string(),
         plan_id,
@@ -248,13 +258,26 @@ pub async fn tenants_create(
 ) -> impl axum::response::IntoResponse {
     let end_opt = form.end_date.as_deref().and_then(|s| {
         let s = s.trim();
-        if s.is_empty() { None } else { Some(s) }
+        if s.is_empty() {
+            None
+        } else {
+            Some(s)
+        }
     });
     if let Err(msg) = validate_tenant_input(&form.name, &form.email, &form.start_date, end_opt) {
         return (axum::http::StatusCode::BAD_REQUEST, msg).into_response();
     }
 
-    match queries::create_tenant(&pool, &plan_id, &form.name, &form.email, &form.start_date, end_opt).await {
+    match queries::create_tenant(
+        &pool,
+        &plan_id,
+        &form.name,
+        &form.email,
+        &form.start_date,
+        end_opt,
+    )
+    .await
+    {
         Ok(_) => Redirect::to(&format!("/admin/plans/{}/tenants", plan_id)).into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -306,13 +329,26 @@ pub async fn tenants_update(
 
     let end_opt = form.end_date.as_deref().and_then(|s| {
         let s = s.trim();
-        if s.is_empty() { None } else { Some(s) }
+        if s.is_empty() {
+            None
+        } else {
+            Some(s)
+        }
     });
     if let Err(msg) = validate_tenant_input(&form.name, &form.email, &form.start_date, end_opt) {
         return (axum::http::StatusCode::BAD_REQUEST, msg).into_response();
     }
 
-    match queries::update_tenant(&pool, &tenant_id, &form.name, &form.email, &form.start_date, end_opt).await {
+    match queries::update_tenant(
+        &pool,
+        &tenant_id,
+        &form.name,
+        &form.email,
+        &form.start_date,
+        end_opt,
+    )
+    .await
+    {
         Ok(_) => Redirect::to(&format!("/admin/plans/{}/tenants", plan_id)).into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -347,8 +383,13 @@ mod tests {
     #[test]
     fn validation_accepts_valid_inputs() {
         assert!(validate_tenant_input("Bob", "bob@example.com", "2024-01-01", None).is_ok());
-        assert!(validate_tenant_input("Bob", "bob@example.com", "2024-01-01", Some("2024-12-31")).is_ok());
-        assert!(validate_tenant_input("Bob", "b.o.b@sub.example.co.uk", "2024-01-01", None).is_ok());
+        assert!(
+            validate_tenant_input("Bob", "bob@example.com", "2024-01-01", Some("2024-12-31"))
+                .is_ok()
+        );
+        assert!(
+            validate_tenant_input("Bob", "b.o.b@sub.example.co.uk", "2024-01-01", None).is_ok()
+        );
     }
 
     #[test]
@@ -358,6 +399,9 @@ mod tests {
         assert!(validate_tenant_input("Bob", "bob@", "2024-01-01", None).is_err());
         assert!(validate_tenant_input("Bob", "bob@example", "2024-01-01", None).is_err());
         assert!(validate_tenant_input("Bob", "bob@example.com", "2024-13-01", None).is_err());
-        assert!(validate_tenant_input("Bob", "bob@example.com", "2024-01-02", Some("2024-01-01")).is_err());
+        assert!(
+            validate_tenant_input("Bob", "bob@example.com", "2024-01-02", Some("2024-01-01"))
+                .is_err()
+        );
     }
 }
