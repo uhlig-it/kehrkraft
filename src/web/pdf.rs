@@ -72,7 +72,7 @@ pub async fn public_pdf(Path(secret_slug): Path<String>, State(pool): State<Db>)
             let name = escape_typst_str(w.assignee_name.as_deref().unwrap_or(""));
             let email = escape_typst_str(w.assignee_email.as_deref().unwrap_or(""));
             format!(
-                "(week: {}, start: \"{}\", end: \"{}\", name: \"{}\", email: \"{}\")",
+                "(: week: {}, start: \"{}\", end: \"{}\", name: \"{}\", email: \"{}\")",
                 w.iso_week,
                 w.start.format("%Y-%m-%d"),
                 w.end.format("%Y-%m-%d"),

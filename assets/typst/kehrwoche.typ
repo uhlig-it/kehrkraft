@@ -3,7 +3,7 @@
 
   #table(columns: 5)[
     table.header([Week], [Start], [End], [Name], [Email])
-    #for row in rows [
+    for row in rows [
       [#row.week] [#row.start] [#row.end] [#row.name] [#row.email]
     ]
   ]
