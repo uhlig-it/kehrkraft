@@ -107,6 +107,19 @@ pub async fn public_pdf(
     let wrapper_src = format!(
         r#"#import "kehrwoche.typ": kehrwoche
 
+#set page(
+  footer: [
+    #set text(8pt)
+    #columns(2)[
+      #set align(left)
+      Erstellt mit Kehrkraft v1.0.0
+      #colbreak()
+      #set align(right)
+      Stand: #datetime.today().display("[day].[month].[year]")
+    ]
+  ]
+)
+
 #let plan_name = "{plan_name}"
 #let year = {year}
 #let rows = {rows}

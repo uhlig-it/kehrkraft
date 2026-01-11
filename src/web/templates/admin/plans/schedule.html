@@ -13,11 +13,10 @@
 <table role="grid">
   <thead>
     <tr>
-      <th>Week</th>
-      <th>Start</th>
-      <th>End</th>
-      <th>Assignee</th>
-      <th>Email</th>
+      <th>Woche</th>
+      <th>von</th>
+      <th>bis</th>
+      <th>Name</th>
     </tr>
   </thead>
   <tbody>
@@ -30,12 +29,6 @@
         {% match w.assignee_name %}
           {% when Some with (n) %}{{ n }}
           {% when None %}<em>Unassigned</em>
-        {% endmatch %}
-      </td>
-      <td>
-        {% match w.assignee_email %}
-          {% when Some with (e) %}{{ e }}
-          {% when None %}—
         {% endmatch %}
       </td>
     </tr>
