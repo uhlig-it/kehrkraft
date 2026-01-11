@@ -186,9 +186,9 @@ pub async fn public_pdf(
     // Build response with headers
     let safe_plan = sanitize_filename(&plan.name);
     let filename = format!("Kehrwoche-{}-{}.pdf", safe_plan, year);
-    let cd_val = format!("attachment; filename=\"{}\"", filename);
+    let cd_val = format!("inline; filename=\"{}\"", filename);
     let cd =
-        HeaderValue::from_str(&cd_val).unwrap_or_else(|_| HeaderValue::from_static("attachment"));
+        HeaderValue::from_str(&cd_val).unwrap_or_else(|_| HeaderValue::from_static("inline"));
 
     (
         [
