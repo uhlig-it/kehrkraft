@@ -92,8 +92,8 @@ pub async fn public_pdf(
             format!(
                 "(week: {}, start: \"{}\", end: \"{}\", name: \"{}\", email: \"{}\")",
                 w.iso_week,
-                w.start.format("%Y-%m-%d"),
-                w.end.format("%Y-%m-%d"),
+                w.start.format("%d.%m.%y"),
+                w.end.format("%d.%m.%y"),
                 name,
                 email
             )

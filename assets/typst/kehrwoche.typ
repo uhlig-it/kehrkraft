@@ -4,7 +4,7 @@
 
   #columns(2)[
     #table(
-      table.header([*W*], [*von*], [*bis*], [*Name*]),
+      table.header([*Wo.*], [*von*], [*bis*], [*Name*]),
       columns: (auto, auto, auto, 1fr),
       stroke: none,
       ..for row in rows {
