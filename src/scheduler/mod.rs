@@ -59,11 +59,9 @@ pub async fn schedule_for_year(
     let mut tenants = parse_tenants(tenants)?;
 
     // Deterministic base order for tenants
-    tenants.sort_by(|a, b| {
-        match a.start.cmp(&b.start) {
-            std::cmp::Ordering::Equal => a.name.cmp(&b.name),
-            other => other,
-        }
+    tenants.sort_by(|a, b| match a.start.cmp(&b.start) {
+        std::cmp::Ordering::Equal => a.name.cmp(&b.name),
+        other => other,
     });
 
     // Iterate ISO weeks of the given year
@@ -94,8 +92,7 @@ pub async fn schedule_for_year(
             });
         } else {
             let active_len = active.len();
-            let idx =
-                ((seed as i128 + week_index as i128).rem_euclid(active_len as i128)) as usize;
+            let idx = ((seed as i128 + week_index as i128).rem_euclid(active_len as i128)) as usize;
             let chosen = active[idx];
 
             weeks.push(WeekAssignment {
@@ -109,7 +106,7 @@ pub async fn schedule_for_year(
             });
         }
 
-        week_start = week_start + Duration::days(7);
+        week_start += Duration::days(7);
         week_index += 1;
     }
 
@@ -119,8 +116,9 @@ pub async fn schedule_for_year(
 fn parse_tenants(raw: Vec<crate::db::models::Tenant>) -> Result<Vec<TenantParsed>, ScheduleError> {
     let mut out = Vec::with_capacity(raw.len());
     for t in raw {
-        let start = NaiveDate::parse_from_str(&t.start_date, "%Y-%m-%d")
-            .map_err(|_| ScheduleError::DateParse(format!("invalid start_date {}", t.start_date)))?;
+        let start = NaiveDate::parse_from_str(&t.start_date, "%Y-%m-%d").map_err(|_| {
+            ScheduleError::DateParse(format!("invalid start_date {}", t.start_date))
+        })?;
         let end = match t.end_date {
             Some(s) => Some(
                 NaiveDate::parse_from_str(&s, "%Y-%m-%d")
@@ -160,9 +158,10 @@ mod tests {
         migrate(&pool).await.expect("migrate");
 
         // Create plan and a single tenant active the whole year
-        let plan = queries::create_plan(&pool, "Test Plan", "Alice Admin", "alice.admin@example.com")
-            .await
-            .expect("create plan");
+        let plan =
+            queries::create_plan(&pool, "Test Plan", "Alice Admin", "alice.admin@example.com")
+                .await
+                .expect("create plan");
 
         let year = 2024;
         let start_date = format!("{year}-01-01");
@@ -182,7 +181,9 @@ mod tests {
             .expect("schedule");
         // 52 or 53 ISO weeks
         assert!(schedule.len() >= 52 && schedule.len() <= 53);
-        assert!(schedule.iter().all(|w| w.assignee_name.as_deref() == Some("Alice")));
+        assert!(schedule
+            .iter()
+            .all(|w| w.assignee_name.as_deref() == Some("Alice")));
     }
 
     #[tokio::test]
@@ -194,9 +195,10 @@ mod tests {
             .expect("connect in-memory");
         migrate(&pool).await.expect("migrate");
 
-        let plan = queries::create_plan(&pool, "Boundary Plan", "Bob Admin", "bob.admin@example.com")
-            .await
-            .expect("create plan");
+        let plan =
+            queries::create_plan(&pool, "Boundary Plan", "Bob Admin", "bob.admin@example.com")
+                .await
+                .expect("create plan");
 
         let year = 2024;
 
@@ -216,16 +218,9 @@ mod tests {
 
         // Tenant B: starts in February
         let b_start = format!("{year}-02-01");
-        queries::create_tenant(
-            &pool,
-            &plan.id,
-            "B",
-            "b@example.com",
-            &b_start,
-            None,
-        )
-        .await
-        .expect("create tenant B");
+        queries::create_tenant(&pool, &plan.id, "B", "b@example.com", &b_start, None)
+            .await
+            .expect("create tenant B");
 
         let a_end_date = NaiveDate::parse_from_str(&a_end, "%Y-%m-%d").unwrap();
         let b_start_date = NaiveDate::parse_from_str(&b_start, "%Y-%m-%d").unwrap();
@@ -240,10 +235,13 @@ mod tests {
         }
 
         // There should be at least one unassigned week between A end and B start
-        let gap_exists = schedule.iter().any(|w| {
-            w.start > a_end_date && w.end < b_start_date && w.assignee_name.is_none()
-        });
-        assert!(gap_exists, "Expected at least one unassigned week between A end and B start");
+        let gap_exists = schedule
+            .iter()
+            .any(|w| w.start > a_end_date && w.end < b_start_date && w.assignee_name.is_none());
+        assert!(
+            gap_exists,
+            "Expected at least one unassigned week between A end and B start"
+        );
 
         // Weeks starting at or after B start should be assigned to B
         for w in schedule.iter().filter(|w| w.start >= b_start_date) {

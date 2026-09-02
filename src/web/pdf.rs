@@ -21,15 +21,7 @@ fn escape_typst_str(s: &str) -> String {
 
 fn sanitize_filename(s: &str) -> String {
     s.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c
-            } else if c.is_ascii_whitespace() {
-                '-'
-            } else {
-                '-'
-            }
-        })
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect()
 }
 
@@ -59,12 +51,12 @@ pub async fn public_pdf(
 
     // Prepare a per-request temp directory
     let mut rnd_bytes = [0u8; 8];
-    rand::rngs::OsRng.fill_bytes(&mut rnd_bytes);
+    rand::rng().fill_bytes(&mut rnd_bytes);
     let rnd = u64::from_le_bytes(rnd_bytes);
     let tmp_dir: PathBuf =
         std::env::temp_dir().join(format!("kehrkraft-{}-{}", std::process::id(), rnd));
 
-    if let Err(_) = fs::create_dir_all(&tmp_dir).await {
+    if fs::create_dir_all(&tmp_dir).await.is_err() {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             "Failed to create temp dir",
@@ -74,7 +66,10 @@ pub async fn public_pdf(
 
     // Write Typst template into temp dir
     let template = include_str!("../../assets/typst/kehrwoche.typ");
-    if let Err(_) = fs::write(tmp_dir.join("kehrwoche.typ"), template).await {
+    if fs::write(tmp_dir.join("kehrwoche.typ"), template)
+        .await
+        .is_err()
+    {
         let _ = fs::remove_dir_all(&tmp_dir).await;
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -131,7 +126,10 @@ pub async fn public_pdf(
         rows = rows_src,
     );
 
-    if let Err(_) = fs::write(tmp_dir.join("wrapper.typ"), wrapper_src.as_bytes()).await {
+    if fs::write(tmp_dir.join("wrapper.typ"), wrapper_src.as_bytes())
+        .await
+        .is_err()
+    {
         let _ = fs::remove_dir_all(&tmp_dir).await;
         return (
             StatusCode::INTERNAL_SERVER_ERROR,

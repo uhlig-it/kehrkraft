@@ -1,5 +1,5 @@
-use kehrkraft::db::{migrate, Db};
 use kehrkraft::db::queries;
+use kehrkraft::db::{migrate, Db};
 use sqlx::sqlite::SqlitePoolOptions;
 
 #[tokio::test]
@@ -28,9 +28,13 @@ async fn plan_crud_works() {
     assert_eq!(got.1.len(), 1);
     assert_eq!(got.1[0].name, "Alice");
 
-    let deleted = queries::delete_plan(&pool, &plan.id).await.expect("delete plan");
+    let deleted = queries::delete_plan(&pool, &plan.id)
+        .await
+        .expect("delete plan");
     assert!(deleted);
 
-    let plans_after = queries::list_plans(&pool).await.expect("list plans after delete");
+    let plans_after = queries::list_plans(&pool)
+        .await
+        .expect("list plans after delete");
     assert_eq!(plans_after.len(), 0);
 }

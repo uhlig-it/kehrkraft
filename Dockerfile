@@ -5,22 +5,35 @@ FROM rust:1 AS builder
 WORKDIR /app
 
 # Cache dependencies
-COPY Cargo.toml .
-RUN mkdir -p src && echo 'fn main() { println!("build placeholder"); }' > src/main.rs
+COPY Cargo.toml ./
+RUN mkdir -p src && echo 'fn main() {}' > src/main.rs && echo '' > src/lib.rs
 RUN cargo build --release
 
 # Build actual binary
 COPY . .
 RUN cargo build --release
 
+# Download the prebuilt Typst CLI (static musl binary, runs on glibc too)
+RUN apt-get update && apt-get install -y --no-install-recommends curl xz-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -L --fail -o /tmp/typst.tar.xz \
+        https://github.com/typst/typst/releases/download/v0.15.1/typst-x86_64-unknown-linux-musl.tar.xz \
+    && mkdir -p /tmp/typst \
+    && tar -xJf /tmp/typst.tar.xz -C /tmp/typst --strip-components=1 \
+    && install -m 0755 /tmp/typst/typst /usr/local/bin/typst \
+    && typst --version
+
 # ----- Runtime stage -----
 FROM debian:trixie-slim
-RUN useradd -m -u 10001 appuser
+RUN useradd -m -u 10001 appuser \
+    && mkdir -p /app \
+    && chown appuser:appuser /app
+# Database file (DATABASE_URL default) is created at runtime under /app
 COPY --from=builder /app/target/release/kehrkraft /usr/local/bin/kehrkraft
-COPY --from=builder /app/kehrkraft.db /app/kehrkraft.db
+COPY --from=builder /usr/local/bin/typst /usr/local/bin/typst
 WORKDIR /app
 ENV RUST_LOG=info
 ENV PORT=3000
 USER appuser
-EXPOSE ${PORT}
+EXPOSE 3000
 CMD ["/usr/local/bin/kehrkraft"]

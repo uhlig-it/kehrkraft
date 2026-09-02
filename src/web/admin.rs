@@ -1,8 +1,7 @@
 use crate::scheduler::{self, WeekAssignment};
 use askama::Template;
-use askama_axum::IntoResponse;
 use axum::extract::{Path, State};
-use axum::response::IntoResponse as AxumIntoResponse;
+use axum::response::IntoResponse as _;
 use axum::response::Redirect;
 use axum::Form;
 use chrono::{Datelike, Local};
@@ -11,6 +10,22 @@ use crate::db::models::{Plan, PlanAdministrator, Tenant};
 use crate::db::queries;
 use crate::db::Db;
 
+/// Render an Askama template into an axum response.
+/// (askama_axum was removed in askama 0.13; this is the replacement.)
+fn render(t: impl Template) -> axum::response::Response {
+    match t.render() {
+        Ok(html) => axum::response::Html(html).into_response(),
+        Err(err) => {
+            tracing::error!(%err, "template render failed");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Template render error",
+            )
+                .into_response()
+        }
+    }
+}
+
 #[derive(Template)]
 #[template(path = "admin/dashboard.html")]
 pub struct DashboardTemplate<'a> {
@@ -18,10 +33,9 @@ pub struct DashboardTemplate<'a> {
 }
 
 pub async fn dashboard() -> impl axum::response::IntoResponse {
-    DashboardTemplate {
+    render(DashboardTemplate {
         title: "Admin Dashboard",
-    }
-    .into_response()
+    })
 }
 
 #[derive(Template)]
@@ -86,11 +100,10 @@ pub struct CreatePlanForm {
 
 pub async fn plans_index(State(pool): State<Db>) -> impl axum::response::IntoResponse {
     match queries::list_plans(&pool).await {
-        Ok(plans) => PlansIndexTemplate {
+        Ok(plans) => render(PlansIndexTemplate {
             title: "Plans",
             plans,
-        }
-        .into_response(),
+        }),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             "Failed to load plans",
@@ -100,7 +113,7 @@ pub async fn plans_index(State(pool): State<Db>) -> impl axum::response::IntoRes
 }
 
 pub async fn plans_new() -> impl axum::response::IntoResponse {
-    PlansNewTemplate { title: "New Plan" }.into_response()
+    render(PlansNewTemplate { title: "New Plan" })
 }
 
 pub async fn plans_create(
@@ -122,12 +135,11 @@ pub async fn plans_show(
     State(pool): State<Db>,
 ) -> impl axum::response::IntoResponse {
     match queries::get_plan(&pool, &id).await {
-        Ok(Some((plan, admins))) => PlansShowTemplate {
+        Ok(Some((plan, admins))) => render(PlansShowTemplate {
             title: format!("Plan: {}", plan.name),
             plan,
             admins,
-        }
-        .into_response(),
+        }),
         Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -145,13 +157,12 @@ pub async fn plans_schedule(
         Ok(Some((plan, _admins))) => {
             let year = Local::now().date_naive().year();
             match scheduler::schedule_for_year(&plan.id, year, &pool).await {
-                Ok(schedule) => PlansScheduleTemplate {
+                Ok(schedule) => render(PlansScheduleTemplate {
                     title: format!("Schedule Preview: {} ({})", plan.name, year),
                     plan,
                     year,
                     schedule,
-                }
-                .into_response(),
+                }),
                 Err(_) => (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                     "Failed to compute schedule",
@@ -229,12 +240,11 @@ pub async fn tenants_index(
     State(pool): State<Db>,
 ) -> impl axum::response::IntoResponse {
     match queries::list_tenants(&pool, &plan_id).await {
-        Ok(tenants) => TenantsIndexTemplate {
+        Ok(tenants) => render(TenantsIndexTemplate {
             title: "Tenants".to_string(),
             plan_id,
             tenants,
-        }
-        .into_response(),
+        }),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             "Failed to load tenants",
@@ -244,11 +254,10 @@ pub async fn tenants_index(
 }
 
 pub async fn tenants_new(Path(plan_id): Path<String>) -> impl axum::response::IntoResponse {
-    TenantsNewTemplate {
+    render(TenantsNewTemplate {
         title: "New Tenant".to_string(),
         plan_id,
-    }
-    .into_response()
+    })
 }
 
 pub async fn tenants_create(
@@ -296,12 +305,11 @@ pub async fn tenants_edit(
             if tenant.plan_id != plan_id {
                 return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response();
             }
-            TenantsEditTemplate {
+            render(TenantsEditTemplate {
                 title: format!("Edit Tenant {}", tenant.name),
                 plan_id,
                 tenant,
-            }
-            .into_response()
+            })
         }
         Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
         Err(_) => (

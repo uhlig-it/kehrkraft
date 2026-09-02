@@ -7,7 +7,7 @@ use crate::db::Db;
 
 fn gen_token() -> String {
     let mut bytes = [0u8; 16];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
@@ -23,7 +23,10 @@ pub async fn list_plans(pool: &Db) -> Result<Vec<Plan>, sqlx::Error> {
     .await
 }
 
-pub async fn get_plan(pool: &Db, id: &str) -> Result<Option<(Plan, Vec<PlanAdministrator>)>, sqlx::Error> {
+pub async fn get_plan(
+    pool: &Db,
+    id: &str,
+) -> Result<Option<(Plan, Vec<PlanAdministrator>)>, sqlx::Error> {
     let plan_opt = sqlx::query_as::<_, Plan>(
         r#"
         SELECT id, name, secret_slug, rotation_seed, created_at, updated_at
@@ -257,9 +260,16 @@ mod tests {
             .expect("create plan");
 
         // Create tenant
-        let t = create_tenant(&pool, &plan.id, "Bob", "bob@example.com", "2024-01-01", None)
-            .await
-            .expect("create tenant");
+        let t = create_tenant(
+            &pool,
+            &plan.id,
+            "Bob",
+            "bob@example.com",
+            "2024-01-01",
+            None,
+        )
+        .await
+        .expect("create tenant");
 
         assert_eq!(t.name, "Bob");
         assert_eq!(t.plan_id, plan.id);
@@ -269,9 +279,16 @@ mod tests {
         assert_eq!(list.len(), 1);
 
         // Update tenant
-        let t2 = update_tenant(&pool, &t.id, "Bobby", "bobby@example.com", "2024-01-01", Some("2024-12-31"))
-            .await
-            .expect("update tenant");
+        let t2 = update_tenant(
+            &pool,
+            &t.id,
+            "Bobby",
+            "bobby@example.com",
+            "2024-01-01",
+            Some("2024-12-31"),
+        )
+        .await
+        .expect("update tenant");
         assert_eq!(t2.name, "Bobby");
         assert_eq!(t2.end_date.as_deref(), Some("2024-12-31"));
 

@@ -3,3 +3,5 @@ target
 .github
 .env
 .DS_Store
+*.db
+Kehrwoche.*

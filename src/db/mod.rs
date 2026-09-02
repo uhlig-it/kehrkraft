@@ -10,13 +10,18 @@ pub mod queries;
 /// Defaults to sqlite:kehrkraft.db when DATABASE_URL is unset.
 /// For sqlite::memory:, restrict to a single connection so the DB persists.
 pub async fn connect_pool() -> Result<SqlitePool, sqlx::Error> {
-    let url = env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:kehrkraft.db".to_string());
+    let mut url = env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:kehrkraft.db".to_string());
 
     let mut opts = SqlitePoolOptions::new();
     if url.starts_with("sqlite::memory:") {
         opts = opts.max_connections(1);
     } else {
         opts = opts.max_connections(5);
+        // sqlx >= 0.9 opens file DBs read-write without creating them by default;
+        // request creation unless the URL already pins a mode.
+        if !url.contains("mode=") {
+            url.push_str("?mode=rwc");
+        }
     }
 
     let pool = opts.connect(&url).await?;

@@ -8,7 +8,10 @@ pub fn port_from_env() -> Option<u16> {
         Ok(val) => match val.parse::<u16>() {
             Ok(p) => Some(p),
             Err(_) => {
-                warn!("Invalid PORT value {:?}; falling back to ephemeral port", val);
+                warn!(
+                    "Invalid PORT value {:?}; falling back to ephemeral port",
+                    val
+                );
                 None
             }
         },

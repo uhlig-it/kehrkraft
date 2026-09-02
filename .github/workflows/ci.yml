@@ -1,10 +1,8 @@
 name: CI
-
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,7 +20,16 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
+      - name: Install Typst
+        run: |
+          curl -L --fail -o typst.tar.xz https://github.com/typst/typst/releases/download/v0.15.1/typst-x86_64-unknown-linux-musl.tar.xz
+          sudo tar -xJf typst.tar.xz -C /usr/local --strip-components=1
+          typst --version
       - name: Build
         run: cargo build --all-targets
+      - name: Format check
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
       - name: Test
         run: cargo test
