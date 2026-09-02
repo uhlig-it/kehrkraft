@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}New Building{% endblock %}
+
+{% block content %}
+<h1>Create a New Building</h1>
+
+<form method="post" action="/admin/buildings">
+  <label>
+    Building Name (max. 30 characters)
+    <input type="text" name="name" maxlength="30" required>
+  </label>
+
+  <label>
+    Description (optional)
+    <input type="text" name="description">
+  </label>
+
+  <fieldset>
+    <legend>Administrator (Contact)</legend>
+    <label>
+      Name
+      <input type="text" name="admin_name" required>
+    </label>
+    <label>
+      Email
+      <input type="email" name="admin_email" required>
+    </label>
+  </fieldset>
+
+  <button type="submit">Create Building</button>
+  <a href="/admin/buildings">Cancel</a>
+</form>
+{% endblock %}

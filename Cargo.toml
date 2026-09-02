@@ -23,8 +23,8 @@ regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 [[test]]
-name = "unit_plan_crud"
-path = "tests/unit/plan_crud.rs"
+name = "unit_building_crud"
+path = "tests/unit/building_crud.rs"
 
 [[test]]
 name = "unit_pdf_response"

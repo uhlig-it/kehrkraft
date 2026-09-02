@@ -2,7 +2,7 @@ use base64::Engine as _;
 use rand::RngCore;
 use sqlx::SqlitePool;
 
-use crate::db::models::{Plan, PlanAdministrator, Tenant};
+use crate::db::models::{Apartment, Building, BuildingAdministrator, Ownership, Tenancy};
 use crate::db::Db;
 
 fn gen_token() -> String {
@@ -11,11 +11,13 @@ fn gen_token() -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
-pub async fn list_plans(pool: &Db) -> Result<Vec<Plan>, sqlx::Error> {
-    sqlx::query_as::<_, Plan>(
+// Buildings CRUD
+
+pub async fn list_buildings(pool: &Db) -> Result<Vec<Building>, sqlx::Error> {
+    sqlx::query_as::<_, Building>(
         r#"
-        SELECT id, name, secret_slug, rotation_seed, created_at, updated_at
-        FROM plans
+        SELECT id, name, description, secret_slug, rotation_seed, created_at, updated_at
+        FROM buildings
         ORDER BY created_at DESC
         "#,
     )
@@ -23,14 +25,14 @@ pub async fn list_plans(pool: &Db) -> Result<Vec<Plan>, sqlx::Error> {
     .await
 }
 
-pub async fn get_plan(
+pub async fn get_building(
     pool: &Db,
     id: &str,
-) -> Result<Option<(Plan, Vec<PlanAdministrator>)>, sqlx::Error> {
-    let plan_opt = sqlx::query_as::<_, Plan>(
+) -> Result<Option<(Building, Vec<BuildingAdministrator>)>, sqlx::Error> {
+    let building_opt = sqlx::query_as::<_, Building>(
         r#"
-        SELECT id, name, secret_slug, rotation_seed, created_at, updated_at
-        FROM plans
+        SELECT id, name, description, secret_slug, rotation_seed, created_at, updated_at
+        FROM buildings
         WHERE id = ?
         "#,
     )
@@ -38,29 +40,29 @@ pub async fn get_plan(
     .fetch_optional(pool)
     .await?;
 
-    if let Some(plan) = plan_opt {
-        let admins = sqlx::query_as::<_, PlanAdministrator>(
+    if let Some(building) = building_opt {
+        let admins = sqlx::query_as::<_, BuildingAdministrator>(
             r#"
-            SELECT id, plan_id, name, email, created_at
-            FROM plan_administrators
-            WHERE plan_id = ?
+            SELECT id, building_id, name, email, created_at
+            FROM building_administrators
+            WHERE building_id = ?
             ORDER BY created_at ASC
             "#,
         )
-        .bind(&plan.id)
+        .bind(&building.id)
         .fetch_all(pool)
         .await?;
-        Ok(Some((plan, admins)))
+        Ok(Some((building, admins)))
     } else {
         Ok(None)
     }
 }
 
-pub async fn get_plan_by_slug(pool: &Db, slug: &str) -> Result<Option<Plan>, sqlx::Error> {
-    sqlx::query_as::<_, Plan>(
+pub async fn get_building_by_slug(pool: &Db, slug: &str) -> Result<Option<Building>, sqlx::Error> {
+    sqlx::query_as::<_, Building>(
         r#"
-        SELECT id, name, secret_slug, rotation_seed, created_at, updated_at
-        FROM plans
+        SELECT id, name, description, secret_slug, rotation_seed, created_at, updated_at
+        FROM buildings
         WHERE secret_slug = ?
         "#,
     )
@@ -69,25 +71,27 @@ pub async fn get_plan_by_slug(pool: &Db, slug: &str) -> Result<Option<Plan>, sql
     .await
 }
 
-pub async fn create_plan(
+pub async fn create_building(
     pool: &SqlitePool,
     name: &str,
+    description: &str,
     admin_name: &str,
     admin_email: &str,
-) -> Result<Plan, sqlx::Error> {
+) -> Result<Building, sqlx::Error> {
     let mut tx = pool.begin().await?;
 
-    let plan_id = gen_token();
+    let building_id = gen_token();
     let secret_slug = gen_token();
 
     sqlx::query(
         r#"
-        INSERT INTO plans (id, name, secret_slug, rotation_seed)
-        VALUES (?, ?, ?, 0)
+        INSERT INTO buildings (id, name, description, secret_slug, rotation_seed)
+        VALUES (?, ?, ?, ?, 0)
         "#,
     )
-    .bind(&plan_id)
+    .bind(&building_id)
     .bind(name)
+    .bind(description)
     .bind(&secret_slug)
     .execute(&mut *tx)
     .await?;
@@ -95,12 +99,12 @@ pub async fn create_plan(
     let admin_id = gen_token();
     sqlx::query(
         r#"
-        INSERT INTO plan_administrators (id, plan_id, name, email)
+        INSERT INTO building_administrators (id, building_id, name, email)
         VALUES (?, ?, ?, ?)
         "#,
     )
     .bind(&admin_id)
-    .bind(&plan_id)
+    .bind(&building_id)
     .bind(admin_name)
     .bind(admin_email)
     .execute(&mut *tx)
@@ -108,49 +112,49 @@ pub async fn create_plan(
 
     tx.commit().await?;
 
-    let plan = sqlx::query_as::<_, Plan>(
+    let building = sqlx::query_as::<_, Building>(
         r#"
-        SELECT id, name, secret_slug, rotation_seed, created_at, updated_at
-        FROM plans
+        SELECT id, name, description, secret_slug, rotation_seed, created_at, updated_at
+        FROM buildings
         WHERE id = ?
         "#,
     )
-    .bind(&plan_id)
+    .bind(&building_id)
     .fetch_one(pool)
     .await?;
 
-    Ok(plan)
+    Ok(building)
 }
 
-pub async fn delete_plan(pool: &Db, id: &str) -> Result<bool, sqlx::Error> {
-    let res = sqlx::query("DELETE FROM plans WHERE id = ?")
+pub async fn delete_building(pool: &Db, id: &str) -> Result<bool, sqlx::Error> {
+    let res = sqlx::query("DELETE FROM buildings WHERE id = ?")
         .bind(id)
         .execute(pool)
         .await?;
     Ok(res.rows_affected() > 0)
 }
 
-// Tenants CRUD
+// Apartments CRUD
 
-pub async fn list_tenants(pool: &Db, plan_id: &str) -> Result<Vec<Tenant>, sqlx::Error> {
-    sqlx::query_as::<_, Tenant>(
+pub async fn list_apartments(pool: &Db, building_id: &str) -> Result<Vec<Apartment>, sqlx::Error> {
+    sqlx::query_as::<_, Apartment>(
         r#"
-        SELECT id, plan_id, name, email, start_date, end_date, created_at
-        FROM tenants
-        WHERE plan_id = ?
-        ORDER BY start_date ASC, name ASC
+        SELECT id, building_id, name, description, created_at
+        FROM apartments
+        WHERE building_id = ?
+        ORDER BY name ASC
         "#,
     )
-    .bind(plan_id)
+    .bind(building_id)
     .fetch_all(pool)
     .await
 }
 
-pub async fn get_tenant(pool: &Db, id: &str) -> Result<Option<Tenant>, sqlx::Error> {
-    sqlx::query_as::<_, Tenant>(
+pub async fn get_apartment(pool: &Db, id: &str) -> Result<Option<Apartment>, sqlx::Error> {
+    sqlx::query_as::<_, Apartment>(
         r#"
-        SELECT id, plan_id, name, email, start_date, end_date, created_at
-        FROM tenants
+        SELECT id, building_id, name, description, created_at
+        FROM apartments
         WHERE id = ?
         "#,
     )
@@ -159,34 +163,30 @@ pub async fn get_tenant(pool: &Db, id: &str) -> Result<Option<Tenant>, sqlx::Err
     .await
 }
 
-pub async fn create_tenant(
+pub async fn create_apartment(
     pool: &Db,
-    plan_id: &str,
+    building_id: &str,
     name: &str,
-    email: &str,
-    start_date: &str,
-    end_date: Option<&str>,
-) -> Result<Tenant, sqlx::Error> {
+    description: &str,
+) -> Result<Apartment, sqlx::Error> {
     let id = gen_token();
     sqlx::query(
         r#"
-        INSERT INTO tenants (id, plan_id, name, email, start_date, end_date)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO apartments (id, building_id, name, description)
+        VALUES (?, ?, ?, ?)
         "#,
     )
     .bind(&id)
-    .bind(plan_id)
+    .bind(building_id)
     .bind(name)
-    .bind(email)
-    .bind(start_date)
-    .bind(end_date)
+    .bind(description)
     .execute(pool)
     .await?;
 
-    sqlx::query_as::<_, Tenant>(
+    sqlx::query_as::<_, Apartment>(
         r#"
-        SELECT id, plan_id, name, email, start_date, end_date, created_at
-        FROM tenants
+        SELECT id, building_id, name, description, created_at
+        FROM apartments
         WHERE id = ?
         "#,
     )
@@ -195,17 +195,139 @@ pub async fn create_tenant(
     .await
 }
 
-pub async fn update_tenant(
+pub async fn update_apartment(
+    pool: &Db,
+    id: &str,
+    name: &str,
+    description: &str,
+) -> Result<Apartment, sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE apartments
+        SET name = ?, description = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(name)
+    .bind(description)
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    sqlx::query_as::<_, Apartment>(
+        r#"
+        SELECT id, building_id, name, description, created_at
+        FROM apartments
+        WHERE id = ?
+        "#,
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn delete_apartment(pool: &Db, id: &str) -> Result<bool, sqlx::Error> {
+    let res = sqlx::query("DELETE FROM apartments WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected() > 0)
+}
+
+// Ownerships CRUD
+
+pub async fn list_ownerships(pool: &Db, apartment_id: &str) -> Result<Vec<Ownership>, sqlx::Error> {
+    sqlx::query_as::<_, Ownership>(
+        r#"
+        SELECT id, apartment_id, name, email, start_date, end_date, created_at
+        FROM ownerships
+        WHERE apartment_id = ?
+        ORDER BY start_date ASC, name ASC
+        "#,
+    )
+    .bind(apartment_id)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn list_ownerships_for_building(
+    pool: &Db,
+    building_id: &str,
+) -> Result<Vec<Ownership>, sqlx::Error> {
+    sqlx::query_as::<_, Ownership>(
+        r#"
+        SELECT o.id, o.apartment_id, o.name, o.email, o.start_date, o.end_date, o.created_at
+        FROM ownerships o
+        INNER JOIN apartments a ON a.id = o.apartment_id
+        WHERE a.building_id = ?
+        ORDER BY o.start_date ASC, o.name ASC
+        "#,
+    )
+    .bind(building_id)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn get_ownership(pool: &Db, id: &str) -> Result<Option<Ownership>, sqlx::Error> {
+    sqlx::query_as::<_, Ownership>(
+        r#"
+        SELECT id, apartment_id, name, email, start_date, end_date, created_at
+        FROM ownerships
+        WHERE id = ?
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn create_ownership(
+    pool: &Db,
+    apartment_id: &str,
+    name: &str,
+    email: &str,
+    start_date: &str,
+    end_date: Option<&str>,
+) -> Result<Ownership, sqlx::Error> {
+    let id = gen_token();
+    sqlx::query(
+        r#"
+        INSERT INTO ownerships (id, apartment_id, name, email, start_date, end_date)
+        VALUES (?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(&id)
+    .bind(apartment_id)
+    .bind(name)
+    .bind(email)
+    .bind(start_date)
+    .bind(end_date)
+    .execute(pool)
+    .await?;
+
+    sqlx::query_as::<_, Ownership>(
+        r#"
+        SELECT id, apartment_id, name, email, start_date, end_date, created_at
+        FROM ownerships
+        WHERE id = ?
+        "#,
+    )
+    .bind(&id)
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn update_ownership(
     pool: &Db,
     id: &str,
     name: &str,
     email: &str,
     start_date: &str,
     end_date: Option<&str>,
-) -> Result<Tenant, sqlx::Error> {
+) -> Result<Ownership, sqlx::Error> {
     sqlx::query(
         r#"
-        UPDATE tenants
+        UPDATE ownerships
         SET name = ?, email = ?, start_date = ?, end_date = ?
         WHERE id = ?
         "#,
@@ -218,10 +340,10 @@ pub async fn update_tenant(
     .execute(pool)
     .await?;
 
-    sqlx::query_as::<_, Tenant>(
+    sqlx::query_as::<_, Ownership>(
         r#"
-        SELECT id, plan_id, name, email, start_date, end_date, created_at
-        FROM tenants
+        SELECT id, apartment_id, name, email, start_date, end_date, created_at
+        FROM ownerships
         WHERE id = ?
         "#,
     )
@@ -230,8 +352,134 @@ pub async fn update_tenant(
     .await
 }
 
-pub async fn delete_tenant(pool: &Db, id: &str) -> Result<bool, sqlx::Error> {
-    let res = sqlx::query("DELETE FROM tenants WHERE id = ?")
+pub async fn delete_ownership(pool: &Db, id: &str) -> Result<bool, sqlx::Error> {
+    let res = sqlx::query("DELETE FROM ownerships WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected() > 0)
+}
+
+// Tenancies CRUD
+
+pub async fn list_tenancies(pool: &Db, apartment_id: &str) -> Result<Vec<Tenancy>, sqlx::Error> {
+    sqlx::query_as::<_, Tenancy>(
+        r#"
+        SELECT id, apartment_id, name, email, start_date, end_date, created_at
+        FROM tenancies
+        WHERE apartment_id = ?
+        ORDER BY start_date ASC, name ASC
+        "#,
+    )
+    .bind(apartment_id)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn list_tenancies_for_building(
+    pool: &Db,
+    building_id: &str,
+) -> Result<Vec<Tenancy>, sqlx::Error> {
+    sqlx::query_as::<_, Tenancy>(
+        r#"
+        SELECT t.id, t.apartment_id, t.name, t.email, t.start_date, t.end_date, t.created_at
+        FROM tenancies t
+        INNER JOIN apartments a ON a.id = t.apartment_id
+        WHERE a.building_id = ?
+        ORDER BY t.start_date ASC, t.name ASC
+        "#,
+    )
+    .bind(building_id)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn get_tenancy(pool: &Db, id: &str) -> Result<Option<Tenancy>, sqlx::Error> {
+    sqlx::query_as::<_, Tenancy>(
+        r#"
+        SELECT id, apartment_id, name, email, start_date, end_date, created_at
+        FROM tenancies
+        WHERE id = ?
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn create_tenancy(
+    pool: &Db,
+    apartment_id: &str,
+    name: &str,
+    email: &str,
+    start_date: &str,
+    end_date: Option<&str>,
+) -> Result<Tenancy, sqlx::Error> {
+    let id = gen_token();
+    sqlx::query(
+        r#"
+        INSERT INTO tenancies (id, apartment_id, name, email, start_date, end_date)
+        VALUES (?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(&id)
+    .bind(apartment_id)
+    .bind(name)
+    .bind(email)
+    .bind(start_date)
+    .bind(end_date)
+    .execute(pool)
+    .await?;
+
+    sqlx::query_as::<_, Tenancy>(
+        r#"
+        SELECT id, apartment_id, name, email, start_date, end_date, created_at
+        FROM tenancies
+        WHERE id = ?
+        "#,
+    )
+    .bind(&id)
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn update_tenancy(
+    pool: &Db,
+    id: &str,
+    name: &str,
+    email: &str,
+    start_date: &str,
+    end_date: Option<&str>,
+) -> Result<Tenancy, sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE tenancies
+        SET name = ?, email = ?, start_date = ?, end_date = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(name)
+    .bind(email)
+    .bind(start_date)
+    .bind(end_date)
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    sqlx::query_as::<_, Tenancy>(
+        r#"
+        SELECT id, apartment_id, name, email, start_date, end_date, created_at
+        FROM tenancies
+        WHERE id = ?
+        "#,
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn delete_tenancy(pool: &Db, id: &str) -> Result<bool, sqlx::Error> {
+    let res = sqlx::query("DELETE FROM tenancies WHERE id = ?")
         .bind(id)
         .execute(pool)
         .await?;
@@ -245,7 +493,7 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     #[tokio::test]
-    async fn tenants_crud_works() {
+    async fn building_crud_works() {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -254,49 +502,135 @@ mod tests {
 
         migrate(&pool).await.expect("migrate");
 
-        // Create plan to attach tenants
-        let plan = create_plan(&pool, "Test Plan", "Alice", "alice@example.com")
-            .await
-            .expect("create plan");
-
-        // Create tenant
-        let t = create_tenant(
+        let building = create_building(
             &pool,
-            &plan.id,
-            "Bob",
-            "bob@example.com",
-            "2024-01-01",
-            None,
+            "Haus Sonnenschein",
+            "A nice building",
+            "Alice",
+            "alice@example.com",
         )
         .await
-        .expect("create tenant");
+        .expect("create building");
 
-        assert_eq!(t.name, "Bob");
-        assert_eq!(t.plan_id, plan.id);
+        assert_eq!(building.name, "Haus Sonnenschein");
+        assert_eq!(building.description, "A nice building");
+        assert!(!building.secret_slug.is_empty());
 
-        // List tenants
-        let list = list_tenants(&pool, &plan.id).await.expect("list tenants");
+        let buildings = list_buildings(&pool).await.expect("list buildings");
+        assert_eq!(buildings.len(), 1);
+
+        let got = get_building(&pool, &building.id)
+            .await
+            .expect("get building")
+            .expect("building exists");
+        assert_eq!(got.0.name, "Haus Sonnenschein");
+        assert_eq!(got.1.len(), 1);
+        assert_eq!(got.1[0].name, "Alice");
+
+        let by_slug = get_building_by_slug(&pool, &building.secret_slug)
+            .await
+            .expect("get building by slug")
+            .expect("building exists");
+        assert_eq!(by_slug.id, building.id);
+
+        let deleted = delete_building(&pool, &building.id)
+            .await
+            .expect("delete building");
+        assert!(deleted);
+
+        let after = list_buildings(&pool).await.expect("list after delete");
+        assert_eq!(after.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn apartment_ownership_tenancy_crud_works() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory");
+
+        migrate(&pool).await.expect("migrate");
+
+        let building = create_building(&pool, "Test Building", "", "Alice", "alice@example.com")
+            .await
+            .expect("create building");
+
+        let apt = create_apartment(&pool, &building.id, "EG links", "Ground floor left")
+            .await
+            .expect("create apartment");
+        assert_eq!(apt.name, "EG links");
+        assert_eq!(apt.building_id, building.id);
+
+        let list = list_apartments(&pool, &building.id)
+            .await
+            .expect("list apartments");
         assert_eq!(list.len(), 1);
 
-        // Update tenant
-        let t2 = update_tenant(
+        let apt2 = update_apartment(&pool, &apt.id, "EG links (neu)", "Renamed")
+            .await
+            .expect("update apartment");
+        assert_eq!(apt2.name, "EG links (neu)");
+
+        // Ownership
+        let o = create_ownership(&pool, &apt.id, "Bob", "bob@example.com", "2024-01-01", None)
+            .await
+            .expect("create ownership");
+        assert_eq!(o.name, "Bob");
+        let o_list = list_ownerships(&pool, &apt.id)
+            .await
+            .expect("list ownerships");
+        assert_eq!(o_list.len(), 1);
+        let o2 = update_ownership(
             &pool,
-            &t.id,
+            &o.id,
             "Bobby",
             "bobby@example.com",
             "2024-01-01",
             Some("2024-12-31"),
         )
         .await
-        .expect("update tenant");
-        assert_eq!(t2.name, "Bobby");
-        assert_eq!(t2.end_date.as_deref(), Some("2024-12-31"));
+        .expect("update ownership");
+        assert_eq!(o2.end_date.as_deref(), Some("2024-12-31"));
 
-        // Delete tenant
-        let deleted = delete_tenant(&pool, &t2.id).await.expect("delete tenant");
-        assert!(deleted);
+        // Tenancy
+        let t = create_tenancy(
+            &pool,
+            &apt.id,
+            "Carla",
+            "carla@example.com",
+            "2024-06-01",
+            None,
+        )
+        .await
+        .expect("create tenancy");
+        assert_eq!(t.name, "Carla");
+        let t_list = list_tenancies(&pool, &apt.id)
+            .await
+            .expect("list tenancies");
+        assert_eq!(t_list.len(), 1);
 
-        let list2 = list_tenants(&pool, &plan.id).await.expect("list tenants 2");
+        // Building-level listing includes both records
+        let all_o = list_ownerships_for_building(&pool, &building.id)
+            .await
+            .expect("ownerships for building");
+        assert_eq!(all_o.len(), 1);
+        let all_t = list_tenancies_for_building(&pool, &building.id)
+            .await
+            .expect("tenancies for building");
+        assert_eq!(all_t.len(), 1);
+
+        // Delete tenancy and ownership; apartment delete cascades the rest
+        assert!(delete_tenancy(&pool, &t.id).await.expect("delete tenancy"));
+        assert!(delete_ownership(&pool, &o2.id)
+            .await
+            .expect("delete ownership"));
+        assert!(delete_apartment(&pool, &apt.id)
+            .await
+            .expect("delete apartment"));
+        let list2 = list_apartments(&pool, &building.id)
+            .await
+            .expect("list apartments after delete");
         assert_eq!(list2.len(), 0);
     }
 }

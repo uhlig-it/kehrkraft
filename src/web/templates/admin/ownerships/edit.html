@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<h1>Edit Owner: {{ ownership.name }}</h1>
+<p>Apartment {{ apartment.name }} ({{ building.name }})</p>
+
+<form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ ownership.id }}">
+  <label>
+    Name
+    <input type="text" name="name" value="{{ ownership.name }}" required />
+  </label>
+
+  <label>
+    Email
+    <input type="email" name="email" value="{{ ownership.email }}" required />
+  </label>
+
+  <label>
+    Ownership Start Date
+    <input type="date" name="start_date" value="{{ ownership.start_date }}" required />
+  </label>
+
+  <label>
+    Ownership End Date (optional)
+    <input type="date" name="end_date" value="{% if ownership.end_date.is_some() %}{{ ownership.end_date.as_ref().unwrap() }}{% endif %}" />
+  </label>
+
+  <button type="submit">Save Changes</button>
+  <a href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">Cancel</a>
+</form>
+{% endblock %}

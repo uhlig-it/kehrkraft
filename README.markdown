@@ -1,21 +1,29 @@
 # Kehrkraft
 
-Kehrkraft is a web application that generates downloadable PDF calendars showing who is responsible for Kehrwoche (stairwell cleaning) in a block of rented flats. A unique, somewhat secret URL serves a PDF for the current year, so that no login is required for viewing the plan.
+# Overview
+
+Kehrkraft is a web application that generates downloadable PDF calendars showing who is responsible for Kehrwoche (stairwell cleaning) in a building of rented apartments. A unique, somewhat secret URL serves a PDF for the current year, so that no login is required for viewing the plan.
+
+# TODO
+
+* Internationalization: Keep strings ready for EN/DE; "Kehrwoche" as canonical term. Collect all strings that need translation and suggest German alternatives, so that we can support both languages
+* iCal feed for a plan
+* Switch to proper auth system
 
 # Domain Model
 
-- A block has a name (max. 30 chars) and description (no limit) and at least one administrator (contact).
-- A block consists of zero or more flats
-- A flat has a name (max. 30 chars) and description (no limit). Conversly, a flat belongs to a block.
-- Each flat has, at any point in time, an owner (we store name and email). Conversly, an owner might own zero or more flats.
-- Ownership of a flat has a start date, and an optional end date.
-- A flat may be rented out to a tenant. For each tenant, we store a name and email address.
+- A building has a name (max. 30 chars) and description (no limit) and at least one administrator (contact).
+- A building consists of zero or more apartments
+- An apartment has a name (max. 30 chars) and description (no limit). Conversely, an apartment belongs to a building.
+- Each apartment has, at any point in time, an owner (we store name and email). Conversely, an owner might own apartments in zero or more buildings.
+- Ownership of an apartment has a start date, and an optional end date.
+- An apartment may be rented out to a tenant. For each tenant, we store a name and email address.
 - Tenancy start date, and an optional end date.
-- At any point in time, not more than one tenacy may be active for a flat. It might happen that a tenacy ended and no new one exists (yet).
-- A plan represents the responsibility for stairwell cleaning for a block during a year. The assignment is scheduled per the following rules:
-  1. Responsibility is assigned to the owners of the flats round-robin.
+- At any point in time, not more than one tenancy may be active for an apartment. It might happen that a tenancy ended and no new one exists (yet).
+- A plan represents the responsibility for stairwell cleaning for a building during a year. The assignment is scheduled per the following rules:
+  1. Responsibility is assigned to the owners of the apartments round-robin.
   1. Responsibility lasts one week each. It starts Monday 00:00 and ends Sunday 23:59.
-  1. If a tenacy is active for a week, the responsibility is delegated to the tenant.
+  1. If a tenancy is active for a week, the responsibility is delegated to the tenant.
 
 # Develop
 
@@ -43,8 +51,8 @@ $ cargo test
 This runs:
 
 - Unit tests (DB `queries`, migrations, scheduler, validation).
-- A PDF integration test that boots the real router, creates a plan, and fetches `/p/{slug}/kehrwoche.pdf` over HTTP, asserting the body is a non-empty PDF.
-- End-to-end tests (`tests/e2e/`) that drive the full app over HTTP: Basic Auth (401 without, dashboard with), create plan + tenant, schedule preview, and the public PDF fetch.
+- A PDF integration test that boots the real router, creates a building, and fetches `/p/{slug}/kehrwoche.pdf` over HTTP, asserting the body is a non-empty PDF.
+- End-to-end tests (`tests/e2e/`) that drive the full app over HTTP: Basic Auth (401 without, dashboard with), create building + apartment + owner + tenancy (including rejection of overlapping tenancies), schedule preview, and the public PDF fetch.
 
 Typst is required only for the two PDF tests; those skip automatically when the `typst` binary is missing. Install it via `brew install typst`, or see https://github.com/typst/typst for other platforms. The CI workflow installs Typst as well.
 
@@ -72,9 +80,11 @@ Bottom-up, deployable after each step
 
 Core domain:
 
-- Plan: id, name, secret_slug (URL token), rotation_seed (optional, integer), created_at, updated_at
-- PlanAdministrator: id, plan_id, name, email, created_at
-- Tenant: id, plan_id, name, email, start_date, end_date NULL, created_at
+- Building: id, name, description, secret_slug (URL token), rotation_seed (optional, integer), created_at, updated_at
+- BuildingAdministrator: id, building_id, name, email, created_at
+- Apartment: id, building_id, name, description, created_at
+- Ownership: id, apartment_id, name, email, start_date, end_date NULL, created_at
+- Tenancy: id, apartment_id, name, email, start_date, end_date NULL, created_at
 
 Public secret URL:
 
@@ -120,7 +130,7 @@ Repository structure (evolves with milestones):
 
 ## Milestones
 
-> **Status:** M0–M5 ✅ done · M6 ✅ done · M7 ✅ done · M8 ✅ done · M9 ✅ done. `cargo test` is green.
+> **Status:** M0–M5 ✅ done · M6 ✅ done · M7 ✅ done · M8 ✅ done · M9 ✅ done · M10 ✅ done. `cargo test` is green.
 
 ### Milestone 0: Bootstrap skeleton and deployable server — ✅ done
 
@@ -245,16 +255,40 @@ Repository structure (evolves with milestones):
 - Acceptance:
   - Single docker run brings up the app with admin and PDF endpoints; logs are structured.
 
+### Milestone 10: Buildings, apartments, owners, and tenancies — ✅ done
+
+- Goal: Align the implementation with the Domain Model: a building consists of apartments; each apartment has ownership records and optional tenancies; the scheduler assigns weeks round-robin to the apartments' owners and delegates to the active tenant where a tenancy overlaps the week.
+- Decisions (confirmed during review):
+  - Terminology: Haus = **building**, Wohnung = **apartment**; the managed entity was renamed from plan to building everywhere (tables, routes, templates, PDF filename) — “plan” now refers only to the derived yearly schedule and the public PDF.
+  - The old `tenants` table was dropped in migration 0002 (its rows have no apartment association and cannot be migrated meaningfully; existing tenant data must be re-entered per apartment). The dev DB can be reset (`rm kehrkraft.db`).
+  - The PDF lists the assignee only (tenant when delegated, otherwise owner); the HTML schedule preview marks delegated weeks with “(tenant)”.
+- Approach:
+  - Migration 0002 renames `plans` → `buildings` (+ `description` column), `plan_administrators` → `building_administrators`, creates `apartments`, `ownerships`, `tenancies`, and drops `tenants`.
+  - Scheduling: per week, active owners are ownerships that contain the whole week (start_date <= week_start AND (end_date IS NULL OR end_date >= week_end)), sorted by (start_date asc, name asc); apartments without an active owner are skipped that week; week offset = (rotation_seed + week_index) % active_len (unchanged); if the chosen apartment has a tenancy containing that week, the assignee is the tenant, otherwise the owner.
+  - Invariant: at most one active tenancy per apartment — overlapping tenancies are rejected on create/update with HTTP 400 (also covered end-to-end).
+  - Validation: building and apartment names max. 30 chars; descriptions unlimited (domain model).
+  - Admin UI: `/admin/buildings/{id}` shows description and apartment link; `/admin/buildings/{id}/apartments` lists apartments; the apartment page shows ownerships and tenancies with inline add forms plus edit/delete; the old tenant pages were removed.
+- Deliverables:
+  - [x] Migration 0002 (renames, apartments, ownerships, tenancies, plans.description; drop tenants).
+  - [x] Models and queries: CRUD for buildings/apartments/ownerships/tenancies, tenancy overlap check.
+  - [x] Scheduler rework: owners round-robin + tenant delegation.
+  - [x] Admin templates: buildings, apartments, ownerships/tenancies edit pages.
+  - [x] Tests: scheduler unit tests (round-robin, delegation, gaps), query tests, admin validation tests, updated e2e flows (create building → apartment → owner → tenancy → schedule preview → PDF; overlapping tenancy rejected).
+- Acceptance:
+  - Admin creates a building with apartments, records ownerships and tenancies.
+  - Schedule preview and PDF assign weeks to owners round-robin; weeks with an active tenancy are delegated to the tenant.
+  - Overlapping tenancies are rejected; invalid inputs rejected.
+  - Public PDF still works without authentication.
+
 ## Key implementation notes
 
 - Basic Auth: Currently a hand-rolled middleware in main.rs (401 + WWW-Authenticate on failure), functionally equivalent to axum-extra's RequireAuthorizationLayer::basic(ADMIN_USER, ADMIN_PASS).
 - Port selection: If PORT unset, bind to 0 (OS assigns an ephemeral >1024 port); log actual port on startup.
-- Secret slug entropy: 128-bit random, base64url-no-pad or Crockford base32; store in plans.secret_slug.
+- Secret slug entropy: 128-bit random, base64url-no-pad or Crockford base32; store in buildings.secret_slug.
 - Time/calendar: Use chrono ISO weeks; be consistent with timezone (UTC or local) and document choice; prefer local for tenant dates if relevant.
 - Typst integration: Keep a reusable kehrwoche.typ; generate a minimal wrapper with serialized data to avoid code injection; per-request temp dir; cleanup.
 - Testing DB: For sqlite::memory:, ensure at least one connection stays open for the pool lifetime so the DB persists within a test.
 - Error handling: Map domain errors to 4xx/5xx; admin pages show friendly error templates.
-- Internationalization: Keep strings ready for EN/DE; "Kehrwoche" as canonical term.
 
 ## License
 

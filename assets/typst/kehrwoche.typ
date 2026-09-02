@@ -1,5 +1,5 @@
-#let kehrwoche(plan_name: str, year: int, rows: array) = [
-  = Kehrwoche #year #plan_name
+#let kehrwoche(building_name: str, year: int, rows: array) = [
+  = Kehrwoche #year #building_name
 
   #columns(2)[
     #table(

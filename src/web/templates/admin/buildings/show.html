@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<h1>{{ building.name }}</h1>
+
+{% if building.description.len() > 0 %}
+<p>{{ building.description }}</p>
+{% endif %}
+
+<p>
+  Public PDF URL:
+  <a href="/p/{{ building.secret_slug }}/kehrwoche.pdf">/p/{{ building.secret_slug }}/kehrwoche.pdf</a>
+</p>
+
+<h2>Administrators</h2>
+{% if admins.len() == 0 %}
+<p>No administrators.</p>
+{% else %}
+<ul>
+  {% for a in admins %}
+    <li>{{ a.name }} &lt;{{ a.email }}&gt;</li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<p>
+  <a href="/admin/buildings/{{ building.id }}/apartments">Manage Apartments</a>
+</p>
+
+<p>
+  <a href="/admin/buildings/{{ building.id }}/schedule">Preview Schedule (HTML)</a>
+</p>
+
+<p>
+  <a href="/admin/buildings">Back to Buildings</a>
+</p>
+
+<form method="post" action="/admin/buildings/{{ building.id }}/delete">
+  <button type="submit">Delete Building</button>
+</form>
+{% endblock %}

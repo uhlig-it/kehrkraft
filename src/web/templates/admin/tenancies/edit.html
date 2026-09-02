@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<h1>Edit Tenant: {{ tenancy.name }}</h1>
+<p>Apartment {{ apartment.name }} ({{ building.name }})</p>
+
+<form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ tenancy.id }}">
+  <label>
+    Name
+    <input type="text" name="name" value="{{ tenancy.name }}" required />
+  </label>
+
+  <label>
+    Email
+    <input type="email" name="email" value="{{ tenancy.email }}" required />
+  </label>
+
+  <label>
+    Tenancy Start Date
+    <input type="date" name="start_date" value="{{ tenancy.start_date }}" required />
+  </label>
+
+  <label>
+    Tenancy End Date (optional)
+    <input type="date" name="end_date" value="{% if tenancy.end_date.is_some() %}{{ tenancy.end_date.as_ref().unwrap() }}{% endif %}" />
+  </label>
+
+  <button type="submit">Save Changes</button>
+  <a href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">Cancel</a>
+</form>
+{% endblock %}

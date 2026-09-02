@@ -143,32 +143,70 @@ pub fn build_router(pool: Db, admin_user: String, admin_pass: String) -> Router 
     let admin_router = Router::new()
         .route("/admin", get(admin::dashboard))
         .route(
-            "/admin/plans",
-            get(admin::plans_index).post(admin::plans_create),
+            "/admin/buildings",
+            get(admin::buildings_index).post(admin::buildings_create),
         )
-        .route("/admin/plans/new", get(admin::plans_new))
-        .route("/admin/plans/{id}", get(admin::plans_show))
-        .route("/admin/plans/{id}/schedule", get(admin::plans_schedule))
+        .route("/admin/buildings/new", get(admin::buildings_new))
+        .route("/admin/buildings/{id}", get(admin::buildings_show))
         .route(
-            "/admin/plans/{id}/delete",
-            axum::routing::post(admin::plans_delete),
-        )
-        .route(
-            "/admin/plans/{id}/tenants",
-            get(admin::tenants_index).post(admin::tenants_create),
-        )
-        .route("/admin/plans/{id}/tenants/new", get(admin::tenants_new))
-        .route(
-            "/admin/plans/{id}/tenants/{tenant_id}/edit",
-            get(admin::tenants_edit),
+            "/admin/buildings/{id}/schedule",
+            get(admin::buildings_schedule),
         )
         .route(
-            "/admin/plans/{id}/tenants/{tenant_id}",
-            axum::routing::post(admin::tenants_update),
+            "/admin/buildings/{id}/delete",
+            axum::routing::post(admin::buildings_delete),
         )
         .route(
-            "/admin/plans/{id}/tenants/{tenant_id}/delete",
-            axum::routing::post(admin::tenants_delete),
+            "/admin/buildings/{id}/apartments",
+            get(admin::apartments_index).post(admin::apartments_create),
+        )
+        .route(
+            "/admin/buildings/{id}/apartments/new",
+            get(admin::apartments_new),
+        )
+        .route(
+            "/admin/buildings/{id}/apartments/{apartment_id}",
+            get(admin::apartments_show),
+        )
+        .route(
+            "/admin/buildings/{id}/apartments/{apartment_id}/update",
+            axum::routing::post(admin::apartments_update),
+        )
+        .route(
+            "/admin/buildings/{id}/apartments/{apartment_id}/delete",
+            axum::routing::post(admin::apartments_delete),
+        )
+        .route(
+            "/admin/buildings/{id}/apartments/{apartment_id}/ownerships",
+            axum::routing::post(admin::ownerships_create),
+        )
+        .route(
+            "/admin/buildings/{id}/apartments/{apartment_id}/ownerships/{ownership_id}/edit",
+            get(admin::ownerships_edit),
+        )
+        .route(
+            "/admin/buildings/{id}/apartments/{apartment_id}/ownerships/{ownership_id}",
+            axum::routing::post(admin::ownerships_update),
+        )
+        .route(
+            "/admin/buildings/{id}/apartments/{apartment_id}/ownerships/{ownership_id}/delete",
+            axum::routing::post(admin::ownerships_delete),
+        )
+        .route(
+            "/admin/buildings/{id}/apartments/{apartment_id}/tenancies",
+            axum::routing::post(admin::tenancies_create),
+        )
+        .route(
+            "/admin/buildings/{id}/apartments/{apartment_id}/tenancies/{tenancy_id}/edit",
+            get(admin::tenancies_edit),
+        )
+        .route(
+            "/admin/buildings/{id}/apartments/{apartment_id}/tenancies/{tenancy_id}",
+            axum::routing::post(admin::tenancies_update),
+        )
+        .route(
+            "/admin/buildings/{id}/apartments/{apartment_id}/tenancies/{tenancy_id}/delete",
+            axum::routing::post(admin::tenancies_delete),
         )
         .route_layer(middleware::from_fn_with_state(
             (admin_user, admin_pass),

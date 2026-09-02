@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Buildings{% endblock %}
+
+{% block content %}
+<h1>Buildings</h1>
+
+<p><a href="/admin/buildings/new">Create New Building</a></p>
+
+{% if buildings.len() == 0 %}
+<p>No buildings yet.</p>
+{% else %}
+<table role="grid">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Secret URL</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for b in buildings %}
+    <tr>
+      <td><a href="/admin/buildings/{{ b.id }}">{{ b.name }}</a></td>
+      <td><code>/p/{{ b.secret_slug }}/kehrwoche.pdf</code></td>
+      <td>
+        <form method="post" action="/admin/buildings/{{ b.id }}/delete" style="display:inline">
+          <button type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

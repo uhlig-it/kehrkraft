@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<h1>Apartment: {{ apartment.name }}</h1>
+
+{% if apartment.description.len() > 0 %}
+<p>{{ apartment.description }}</p>
+{% endif %}
+
+<form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/update">
+  <label>
+    Name (max. 30 characters)
+    <input type="text" name="name" value="{{ apartment.name }}" maxlength="30" required />
+  </label>
+  <label>
+    Description (optional)
+    <input type="text" name="description" value="{{ apartment.description }}" />
+  </label>
+  <button type="submit">Save Apartment</button>
+</form>
+
+<h2>Owners</h2>
+{% if ownerships.len() == 0 %}
+<p>No owners recorded.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Email</th>
+      <th>Start Date</th>
+      <th>End Date</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for o in ownerships %}
+    <tr>
+      <td>{{ o.name }}</td>
+      <td>{{ o.email }}</td>
+      <td>{{ o.start_date }}</td>
+      <td>{% if o.end_date.is_some() %}{{ o.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
+      <td>
+        <a href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ o.id }}/edit">Edit</a>
+        <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ o.id }}/delete" style="display:inline">
+          <button type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<details>
+  <summary>Add Owner</summary>
+  <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships">
+    <label>
+      Name
+      <input type="text" name="name" required />
+    </label>
+    <label>
+      Email
+      <input type="email" name="email" required />
+    </label>
+    <label>
+      Ownership Start Date
+      <input type="date" name="start_date" required />
+    </label>
+    <label>
+      Ownership End Date (optional)
+      <input type="date" name="end_date" />
+    </label>
+    <button type="submit">Add Owner</button>
+  </form>
+</details>
+
+<h2>Tenants</h2>
+<p><em>When a tenancy is active for a week, the Kehrwoche duty is delegated to the tenant. Overlapping tenancies are rejected.</em></p>
+{% if tenancies.len() == 0 %}
+<p>No tenancies recorded.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Email</th>
+      <th>Start Date</th>
+      <th>End Date</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for t in tenancies %}
+    <tr>
+      <td>{{ t.name }}</td>
+      <td>{{ t.email }}</td>
+      <td>{{ t.start_date }}</td>
+      <td>{% if t.end_date.is_some() %}{{ t.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
+      <td>
+        <a href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ t.id }}/edit">Edit</a>
+        <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ t.id }}/delete" style="display:inline">
+          <button type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<details>
+  <summary>Add Tenant</summary>
+  <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies">
+    <label>
+      Name
+      <input type="text" name="name" required />
+    </label>
+    <label>
+      Email
+      <input type="email" name="email" required />
+    </label>
+    <label>
+      Tenancy Start Date
+      <input type="date" name="start_date" required />
+    </label>
+    <label>
+      Tenancy End Date (optional)
+      <input type="date" name="end_date" />
+    </label>
+    <button type="submit">Add Tenant</button>
+  </form>
+</details>
+
+<p>
+  <a href="/admin/buildings/{{ building.id }}/apartments">Back to Apartments</a>
+  &nbsp;|&nbsp;
+  <a href="/admin/buildings/{{ building.id }}">Back to Building</a>
+</p>
+{% endblock %}

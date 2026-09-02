@@ -7,7 +7,7 @@
 
 <p>
   Public PDF URL:
-  <a href="/p/{{ plan.secret_slug }}/kehrwoche.pdf">/p/{{ plan.secret_slug }}/kehrwoche.pdf</a>
+  <a href="/p/{{ building.secret_slug }}/kehrwoche.pdf">/p/{{ building.secret_slug }}/kehrwoche.pdf</a>
 </p>
 
 <table role="grid">
@@ -27,7 +27,8 @@
       <td>{{ w.end }}</td>
       <td>
         {% match w.assignee_name %}
-          {% when Some with (n) %}{{ n }}
+          {% when Some with (n) %}
+            {{ n }}{% if w.delegated %} <em>(tenant)</em>{% endif %}
           {% when None %}<em>Unassigned</em>
         {% endmatch %}
       </td>
@@ -37,6 +38,6 @@
 </table>
 
 <p>
-  <a href="/admin/plans/{{ plan.id }}">Back to Plan</a>
+  <a href="/admin/buildings/{{ building.id }}">Back to Building</a>
 </p>
 {% endblock %}

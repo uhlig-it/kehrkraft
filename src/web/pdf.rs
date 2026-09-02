@@ -29,16 +29,16 @@ pub async fn public_pdf(
     Path(secret_slug): Path<String>,
     State(pool): State<Db>,
 ) -> impl IntoResponse {
-    // Lookup plan by secret slug
-    let plan = match queries::get_plan_by_slug(&pool, &secret_slug).await {
-        Ok(Some(p)) => p,
-        Ok(None) => return (StatusCode::NOT_FOUND, "Plan not found").into_response(),
+    // Lookup building by secret slug
+    let building = match queries::get_building_by_slug(&pool, &secret_slug).await {
+        Ok(Some(b)) => b,
+        Ok(None) => return (StatusCode::NOT_FOUND, "Building not found").into_response(),
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response(),
     };
 
     // Compute current year's schedule
     let year = Local::now().year();
-    let schedule = match scheduler::schedule_for_year(&plan.id, year, &pool).await {
+    let schedule = match scheduler::schedule_for_year(&building.id, year, &pool).await {
         Ok(s) => s,
         Err(_) => {
             return (
@@ -98,7 +98,7 @@ pub async fn public_pdf(
     let rows_src = format!("(\n{}\n)", rows_parts.join(",\n"));
 
     // Build wrapper Typst source
-    let plan_name_escaped = escape_typst_str(&plan.name);
+    let building_name_escaped = escape_typst_str(&building.name);
     let wrapper_src = format!(
         r#"#import "kehrwoche.typ": kehrwoche
 
@@ -115,13 +115,13 @@ pub async fn public_pdf(
   ]
 )
 
-#let plan_name = "{plan_name}"
+#let building_name = "{building_name}"
 #let year = {year}
 #let rows = {rows}
 
-#kehrwoche(plan_name: plan_name, year: year, rows: rows)
+#kehrwoche(building_name: building_name, year: year, rows: rows)
 "#,
-        plan_name = plan_name_escaped,
+        building_name = building_name_escaped,
         year = year,
         rows = rows_src,
     );
@@ -195,8 +195,8 @@ pub async fn public_pdf(
     let _ = fs::remove_dir_all(&tmp_dir).await;
 
     // Build response with headers
-    let safe_plan = sanitize_filename(&plan.name);
-    let filename = format!("Kehrwoche-{}-{}.pdf", safe_plan, year);
+    let safe_building = sanitize_filename(&building.name);
+    let filename = format!("Kehrwoche-{}-{}.pdf", safe_building, year);
     let cd_val = format!("inline; filename=\"{}\"", filename);
     let cd = HeaderValue::from_str(&cd_val).unwrap_or_else(|_| HeaderValue::from_static("inline"));
 

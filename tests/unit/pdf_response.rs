@@ -54,9 +54,9 @@ async fn public_pdf_returns_valid_pdf() {
 
     let (base_url, _pool) = start_app().await;
 
-    let plan = queries::create_plan(&_pool, "Test Plan", "Alice", "alice@example.com")
+    let plan = queries::create_building(&_pool, "Test Plan", "", "Alice", "alice@example.com")
         .await
-        .expect("create plan");
+        .expect("create building");
 
     let client = reqwest::Client::new();
     let resp = client

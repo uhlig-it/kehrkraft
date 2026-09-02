@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<h1>New Apartment: {{ building.name }}</h1>
+
+<form method="post" action="/admin/buildings/{{ building.id }}/apartments">
+  <label>
+    Name (max. 30 characters)
+    <input type="text" name="name" maxlength="30" required />
+  </label>
+
+  <label>
+    Description (optional)
+    <input type="text" name="description" />
+  </label>
+
+  <button type="submit">Create Apartment</button>
+  <a href="/admin/buildings/{{ building.id }}/apartments">Cancel</a>
+</form>
+{% endblock %}
