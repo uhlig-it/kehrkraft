@@ -6,9 +6,16 @@ Kehrkraft is a web application that generates downloadable PDF calendars showing
 
 # TODO
 
+* Some links better be buttons
+* Inherit CI from rostfacto
+* Replace PicoCSS with plain vanilla CSS
 * Internationalization: Keep strings ready for EN/DE; "Kehrwoche" as canonical term. Collect all strings that need translation and suggest German alternatives, so that we can support both languages
 * iCal feed for a plan
+* Read-only JSON feed for hardware integrations
+* Reminders that duty is due for a tenant / owner
 * Switch to proper auth system
+* Hourly database backup to S3 with retention
+* Home page
 
 # Domain Model
 
