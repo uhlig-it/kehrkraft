@@ -99,6 +99,8 @@ pub async fn public_pdf(
 
     // Build wrapper Typst source
     let building_name_escaped = escape_typst_str(&building.name);
+    // Version of the running binary, baked in at compile time from Cargo.toml
+    let version = env!("CARGO_PKG_VERSION");
     let wrapper_src = format!(
         r#"#import "kehrwoche.typ": kehrwoche
 
@@ -107,7 +109,7 @@ pub async fn public_pdf(
     #set text(8pt)
     #columns(2)[
       #set align(left)
-      Erstellt mit Kehrkraft v1.0.0
+      Erstellt mit Kehrkraft v{version}
       #colbreak()
       #set align(right)
       Stand: #datetime.today().display("[day].[month].[year]")
@@ -124,6 +126,7 @@ pub async fn public_pdf(
         building_name = building_name_escaped,
         year = year,
         rows = rows_src,
+        version = version,
     );
 
     if fs::write(tmp_dir.join("wrapper.typ"), wrapper_src.as_bytes())
