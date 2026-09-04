@@ -13,11 +13,17 @@ RUN cargo build --release
 COPY . .
 RUN cargo build --release
 
-# Download the prebuilt Typst CLI (static musl binary, runs on glibc too)
+# Download the prebuilt Typst CLI (static musl binary, runs on glibc too).
+# TARGETARCH is set by BuildKit: amd64 on x86_64 hosts, arm64 on aarch64 hosts.
+ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends curl xz-utils \
     && rm -rf /var/lib/apt/lists/* \
+    && case "$TARGETARCH" in \
+         arm64) TYPT_ARCH=aarch64 ;; \
+         *) TYPT_ARCH=x86_64 ;; \
+       esac \
     && curl -L --fail -o /tmp/typst.tar.xz \
-        https://github.com/typst/typst/releases/download/v0.15.1/typst-x86_64-unknown-linux-musl.tar.xz \
+        https://github.com/typst/typst/releases/download/v0.15.1/typst-$TYPT_ARCH-unknown-linux-musl.tar.xz \
     && mkdir -p /tmp/typst \
     && tar -xJf /tmp/typst.tar.xz -C /tmp/typst --strip-components=1 \
     && install -m 0755 /tmp/typst/typst /usr/local/bin/typst \
