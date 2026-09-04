@@ -6,13 +6,21 @@ Kehrkraft is a web application that generates downloadable PDF calendars showing
 
 # TODO
 
-* List people and their roles (admin, owner, tenant) and their objects
+* Bug: overlapping ownership must be rejected at DB level
+* Error messages (e.g. "Tenancy overlaps an existing tenancy of this apartment") must be rendered, perhaps inline
 * Inherit CI from rostfacto
+  - unit tests
+  - publish container
+* Deploy to soda or neon using a separate, private project (`kehrkraft-deployment`)
+* Support path variables:
+  - `TYPST_BIN_PATH` (optional) - Full path to the typst executable that is to be used for generating the PDF invoice. Defaults to the first `typst` in the `$PATH`. If set and non-empty, that value is returned directly. Otherwise, "typst" is found in the system PATH.
+  - `TYPST_SPOOL_DIR` (optional) - Path to an existing directory where the typst file for the PDF invoice, together with the JSON containing billing data and the Factur-X XML, will be stored. This contents of this directory are ephemeral, but they may be useful for troubleshooting PDF generation. Defaults to `$TMPDIR`.
 * Internationalization: Keep strings ready for EN/DE; "Kehrwoche" as canonical term. Collect all strings that need translation and suggest German alternatives, so that we can support both languages
 * iCal feed for a plan
 * Reminders that duty is due for a tenant / owner
+* Hourly database backup to S3 with retention (port sqlite-vault to sqlite-vault-rs)
+* List people and their roles (admin, owner, tenant) and their objects
 * Switch to proper auth system
-* Hourly database backup to S3 with retention
 * Read-only JSON feed for hardware integrations
 
 # Domain Model
