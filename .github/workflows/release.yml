@@ -1,0 +1,77 @@
+name: Release
+on: {push: {tags: ["v*"]}}
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            asset: kehrkraft-linux-amd64.tar.gz
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+            asset: kehrkraft-linux-arm64.tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            asset: kehrkraft-darwin-arm64.tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # The toolchain is pinned by rust-toolchain.toml; the first cargo command
+      # makes rustup install it. Install the cross-compilation target on that
+      # same pinned toolchain (rustup target add honors the directory override).
+      - name: Install pinned Rust toolchain and cross-compilation target
+        run: |
+          cargo --version
+          rustup target add "${{ matrix.target }}"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Install musl-tools (Linux musl targets)
+        if: contains(matrix.target, 'musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          # Use musl-gcc for the cc crate when cross-compiling musl targets
+          TARGET_CC_VAR="CC_$(echo ${{ matrix.target }} | tr - _)"
+          echo "$TARGET_CC_VAR=musl-gcc" >> "$GITHUB_ENV"
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Compress binary
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../${{ matrix.asset }} kehrkraft
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Extract changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { found=1; print; next }
+            found && $0 ~ "^## \\[" { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          # Fall back to the Unreleased section until a section for the tagged
+          # version exists (the first release is still under [Unreleased]).
+          if [ ! -s release-notes.md ]; then
+            awk '
+              $0 == "## [Unreleased]" { found=1; print; next }
+              found && $0 ~ "^## \\[" { exit }
+              found { print }
+            ' CHANGELOG.md > release-notes.md
+          fi
+      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
+        with:
+          files: artifacts/*.tar.gz
+          body_path: release-notes.md

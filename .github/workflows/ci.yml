@@ -3,33 +3,44 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
 jobs:
-  build:
+  lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Setup Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
-      - name: Cache cargo registry and build artifacts
-        uses: actions/cache@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Audit dependencies for known vulnerabilities
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          token: ${{ secrets.GITHUB_TOKEN }}
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Install Typst
+        # Needed by the PDF tests; they skip when the binary is missing. The
+        # version matches the one bundled in the Docker image.
         run: |
           curl -L --fail -o typst.tar.xz https://github.com/typst/typst/releases/download/v0.15.1/typst-x86_64-unknown-linux-musl.tar.xz
           sudo tar -xJf typst.tar.xz -C /usr/local --strip-components=1
           typst --version
-      - name: Build
-        run: cargo build --all-targets
-      - name: Format check
-        run: cargo fmt --check
-      - name: Lint
-        run: cargo clippy --all-targets -- -D warnings
-      - name: Test
-        run: cargo test
+      - name: Run unit tests
+        run: cargo test --lib --bins
+      - name: Run integration tests
+        # unit_building_crud, unit_pdf_response, and e2e are the Cargo test
+        # targets declared/discovered for this repo (tests/unit/plan_crud.rs is
+        # intentionally not a target).
+        run: cargo test --test unit_building_crud --test unit_pdf_response --test e2e

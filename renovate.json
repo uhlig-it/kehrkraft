@@ -1,0 +1,35 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "rebaseWhen": "behind-base-branch",
+  "labels": ["dependencies"],
+  "minimumReleaseAge": "3 days",
+  "packageRules": [
+    {
+      "description": "Auto-merge Cargo patch updates after required CI checks pass.",
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "GitHub Actions are pinned to commit SHAs; auto-merge digest updates, which stay on the same major/minor tag (the trailing comment shows the tag).",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["digest"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Our own image is rebuilt on every push to main, so a new digest appears faster than the stability window; skip minimumReleaseAge for it (it is already validated by CI).",
+      "matchPackageNames": ["ghcr.io/uhlig-it/kehrkraft"],
+      "minimumReleaseAge": "0"
+    },
+    {
+      "description": "Require human review for potentially breaking dependency updates.",
+      "matchUpdateTypes": ["minor", "major"],
+      "automerge": false
+    }
+  ]
+}
