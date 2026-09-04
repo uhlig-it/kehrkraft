@@ -510,6 +510,32 @@ pub async fn ownerships_create(
         return (axum::http::StatusCode::BAD_REQUEST, msg).into_response();
     }
 
+    let start = NaiveDate::parse_from_str(&form.start_date, "%Y-%m-%d").expect("validated date");
+    let end = end_opt.and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+
+    // Enforce: at most one active ownership per apartment at any point in time
+    match queries::list_ownerships(&pool, &apartment_id).await {
+        Ok(existing) => {
+            if existing
+                .iter()
+                .any(|o| overlaps_ownership(o, start, end, None))
+            {
+                return (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    "Ownership overlaps an existing ownership of this apartment",
+                )
+                    .into_response();
+            }
+        }
+        Err(_) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to load ownerships",
+            )
+                .into_response()
+        }
+    }
+
     match queries::create_ownership(
         &pool,
         &apartment_id,
@@ -586,6 +612,32 @@ pub async fn ownerships_update(
     let end_opt = normalize_end_date(form.end_date.as_deref());
     if let Err(msg) = validate_person_input(&form.name, &form.email, &form.start_date, end_opt) {
         return (axum::http::StatusCode::BAD_REQUEST, msg).into_response();
+    }
+
+    let start = NaiveDate::parse_from_str(&form.start_date, "%Y-%m-%d").expect("validated date");
+    let end = end_opt.and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+
+    // Enforce: at most one active ownership per apartment at any point in time
+    match queries::list_ownerships(&pool, &apartment_id).await {
+        Ok(existing) => {
+            if existing
+                .iter()
+                .any(|o| overlaps_ownership(o, start, end, Some(&ownership_id)))
+            {
+                return (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    "Ownership overlaps an existing ownership of this apartment",
+                )
+                    .into_response();
+            }
+        }
+        Err(_) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to load ownerships",
+            )
+                .into_response()
+        }
     }
 
     match queries::update_ownership(
@@ -750,6 +802,22 @@ pub async fn tenancies_edit(
     }
 }
 
+/// Does the dated record (start_date/end_date strings) overlap [start, end]?
+fn record_overlaps(
+    start_date: &str,
+    end_date: Option<&str>,
+    start: NaiveDate,
+    end: Option<NaiveDate>,
+) -> bool {
+    match NaiveDate::parse_from_str(start_date, "%Y-%m-%d") {
+        Ok(r_start) => {
+            let r_end = end_date.and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+            periods_overlap(r_start, r_end, start, end)
+        }
+        Err(_) => false,
+    }
+}
+
 /// Does the tenancy record overlap [start, end] (excluding `exclude_id`)?
 fn overlaps_tenancy(
     t: &Tenancy,
@@ -760,16 +828,20 @@ fn overlaps_tenancy(
     if exclude_id == Some(t.id.as_str()) {
         return false;
     }
-    match NaiveDate::parse_from_str(&t.start_date, "%Y-%m-%d") {
-        Ok(t_start) => {
-            let t_end = t
-                .end_date
-                .as_deref()
-                .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
-            periods_overlap(t_start, t_end, start, end)
-        }
-        Err(_) => false,
+    record_overlaps(&t.start_date, t.end_date.as_deref(), start, end)
+}
+
+/// Does the ownership record overlap [start, end] (excluding `exclude_id`)?
+fn overlaps_ownership(
+    o: &Ownership,
+    start: NaiveDate,
+    end: Option<NaiveDate>,
+    exclude_id: Option<&str>,
+) -> bool {
+    if exclude_id == Some(o.id.as_str()) {
+        return false;
     }
+    record_overlaps(&o.start_date, o.end_date.as_deref(), start, end)
 }
 
 pub async fn tenancies_update(
@@ -868,11 +940,35 @@ pub async fn tenancies_delete(
 
 #[cfg(test)]
 mod tests {
-    use super::periods_overlap;
+    use super::{overlaps_ownership, overlaps_tenancy, periods_overlap, Ownership, Tenancy};
     use chrono::NaiveDate;
 
     fn d(s: &str) -> NaiveDate {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    fn t(id: &str, start: &str, end: Option<&str>) -> Tenancy {
+        Tenancy {
+            id: id.into(),
+            apartment_id: "apt".into(),
+            name: "Tenant".into(),
+            email: "t@example.com".into(),
+            start_date: start.into(),
+            end_date: end.map(str::to_string),
+            created_at: String::new(),
+        }
+    }
+
+    fn o(id: &str, start: &str, end: Option<&str>) -> Ownership {
+        Ownership {
+            id: id.into(),
+            apartment_id: "apt".into(),
+            name: "Owner".into(),
+            email: "o@example.com".into(),
+            start_date: start.into(),
+            end_date: end.map(str::to_string),
+            created_at: String::new(),
+        }
     }
 
     #[test]
@@ -962,5 +1058,81 @@ mod tests {
         let thirty = "x".repeat(30);
         assert!(super::validate_name(&thirty).is_ok());
         assert!(super::validate_name(&format!("{thirty}x")).is_err());
+    }
+
+    #[test]
+    fn tenancy_overlap_detection() {
+        // Overlapping periods are detected, including open-ended records.
+        assert!(overlaps_tenancy(
+            &t("t1", "2024-01-01", Some("2024-06-30")),
+            d("2024-06-01"),
+            None,
+            None
+        ));
+        assert!(overlaps_tenancy(
+            &t("t1", "2024-01-01", None),
+            d("2025-01-01"),
+            None,
+            None
+        ));
+        // Adjacent (non-overlapping) periods are accepted.
+        assert!(!overlaps_tenancy(
+            &t("t1", "2024-01-01", Some("2024-06-30")),
+            d("2024-07-01"),
+            None,
+            None
+        ));
+        // Updating a record does not reject itself (exclude_id), even when
+        // another record with the same span would be rejected.
+        assert!(!overlaps_tenancy(
+            &t("t1", "2024-01-01", Some("2024-06-30")),
+            d("2024-01-01"),
+            Some(d("2024-12-31")),
+            Some("t1")
+        ));
+        assert!(overlaps_tenancy(
+            &t("t1", "2024-01-01", Some("2024-06-30")),
+            d("2024-01-01"),
+            Some(d("2024-12-31")),
+            Some("other")
+        ));
+    }
+
+    #[test]
+    fn ownership_overlap_detection() {
+        // Overlapping periods are detected, including open-ended records.
+        assert!(overlaps_ownership(
+            &o("o1", "2024-01-01", Some("2024-06-30")),
+            d("2024-06-01"),
+            None,
+            None
+        ));
+        assert!(overlaps_ownership(
+            &o("o1", "2024-01-01", None),
+            d("2025-01-01"),
+            None,
+            None
+        ));
+        // Adjacent (non-overlapping) periods are accepted.
+        assert!(!overlaps_ownership(
+            &o("o1", "2024-01-01", Some("2024-06-30")),
+            d("2024-07-01"),
+            None,
+            None
+        ));
+        // Updating a record does not reject itself (exclude_id), even when
+        // another record with the same span would be rejected.
+        assert!(!overlaps_ownership(
+            &o("o1", "2024-01-01", Some("2024-06-30")),
+            d("2024-01-01"),
+            Some(d("2024-12-31")),
+            Some("o1")
+        ));
+        assert!(overlaps_ownership(
+            &o("o1", "2024-01-01", Some("2024-06-30")),
+            d("2024-01-01"),
+            Some(d("2024-12-31")),
+            Some("other")
+        ));
     }
 }

@@ -1,6 +1,7 @@
 //! The E2E scenarios from Milestone 8/10, driven over HTTP.
 
 use crate::harness::{self, Harness};
+use kehrkraft::db::queries;
 use reqwest::StatusCode;
 
 /// Authenticated client that does not follow redirects (we assert on the
@@ -402,6 +403,207 @@ async fn public_pdf_endpoint_returns_pdf() {
         "expected PDF magic, got {:?}",
         &body[..body.len().min(8)]
     );
+}
+
+#[tokio::test]
+async fn overlapping_ownerships_are_rejected() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    let id = create_building(&h, &client, "Eigentümerblock").await;
+    let apartment_id = create_apartment(&h, &client, &id, "DG").await;
+    let apt_url = format!(
+        "{}/admin/buildings/{id}/apartments/{apartment_id}",
+        h.base_url
+    );
+
+    // First ownership occupies January through June.
+    let first = basic_auth(client.post(format!("{apt_url}/ownerships")))
+        .form(&[
+            ("name", "Otto"),
+            ("email", "otto@example.com"),
+            ("start_date", "2026-01-01"),
+            ("end_date", "2026-06-30"),
+        ])
+        .send()
+        .await
+        .expect("create ownership");
+    assert_eq!(first.status(), StatusCode::SEE_OTHER);
+
+    // Overlapping ownership must be rejected on create.
+    let overlap = basic_auth(client.post(format!("{apt_url}/ownerships")))
+        .form(&[
+            ("name", "Karla"),
+            ("email", "karla@example.com"),
+            ("start_date", "2026-06-01"),
+        ])
+        .send()
+        .await
+        .expect("create overlapping ownership");
+    assert_eq!(
+        overlap.status(),
+        StatusCode::BAD_REQUEST,
+        "overlapping ownership should be rejected"
+    );
+
+    // Adjacent (non-overlapping) ownership is accepted.
+    let adjacent = basic_auth(client.post(format!("{apt_url}/ownerships")))
+        .form(&[
+            ("name", "Karl"),
+            ("email", "karl@example.com"),
+            ("start_date", "2026-07-01"),
+        ])
+        .send()
+        .await
+        .expect("create adjacent ownership");
+    assert_eq!(adjacent.status(), StatusCode::SEE_OTHER);
+
+    // Updating an ownership into an overlapping period must be rejected.
+    let owners = queries::list_ownerships(&h.pool, &apartment_id)
+        .await
+        .expect("list ownerships");
+    let adjacent_id = owners
+        .iter()
+        .find(|o| o.name == "Karl")
+        .expect("adjacent ownership")
+        .id
+        .clone();
+    let update = basic_auth(client.post(format!("{apt_url}/ownerships/{adjacent_id}")))
+        .form(&[
+            ("name", "Karl"),
+            ("email", "karl@example.com"),
+            ("start_date", "2026-06-01"),
+        ])
+        .send()
+        .await
+        .expect("update ownership into overlap");
+    assert_eq!(
+        update.status(),
+        StatusCode::BAD_REQUEST,
+        "overlapping ownership update should be rejected"
+    );
+}
+
+#[tokio::test]
+async fn overlapping_tenancy_update_rejected() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    let id = create_building(&h, &client, "Musterblock").await;
+    let apartment_id = create_apartment(&h, &client, &id, "OG links").await;
+    let apt_url = format!(
+        "{}/admin/buildings/{id}/apartments/{apartment_id}",
+        h.base_url
+    );
+
+    // First tenancy occupies January through June.
+    let first = basic_auth(client.post(format!("{apt_url}/tenancies")))
+        .form(&[
+            ("name", "Nina"),
+            ("email", "nina@example.com"),
+            ("start_date", "2026-01-01"),
+            ("end_date", "2026-06-30"),
+        ])
+        .send()
+        .await
+        .expect("create tenancy");
+    assert_eq!(first.status(), StatusCode::SEE_OTHER);
+
+    // A second, adjacent tenancy.
+    let second = basic_auth(client.post(format!("{apt_url}/tenancies")))
+        .form(&[
+            ("name", "Karl"),
+            ("email", "karl@example.com"),
+            ("start_date", "2026-07-01"),
+        ])
+        .send()
+        .await
+        .expect("create adjacent tenancy");
+    assert_eq!(second.status(), StatusCode::SEE_OTHER);
+
+    // Updating the second tenancy into an overlapping period is rejected.
+    let tenancies = queries::list_tenancies(&h.pool, &apartment_id)
+        .await
+        .expect("list tenancies");
+    let second_id = tenancies
+        .iter()
+        .find(|t| t.name == "Karl")
+        .expect("second tenancy")
+        .id
+        .clone();
+    let update = basic_auth(client.post(format!("{apt_url}/tenancies/{second_id}")))
+        .form(&[
+            ("name", "Karl"),
+            ("email", "karl@example.com"),
+            ("start_date", "2026-06-01"),
+        ])
+        .send()
+        .await
+        .expect("update tenancy into overlap");
+    assert_eq!(
+        update.status(),
+        StatusCode::BAD_REQUEST,
+        "overlapping tenancy update should be rejected"
+    );
+}
+
+#[tokio::test]
+async fn name_length_limits_are_enforced() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    // Building names are capped at 30 characters.
+    let too_long = "x".repeat(31);
+    let rejected = basic_auth(client.post(format!("{}/admin/buildings", h.base_url)))
+        .form(&[
+            ("name", too_long.as_str()),
+            ("description", ""),
+            ("admin_name", "Alice"),
+            ("admin_email", "alice@example.com"),
+        ])
+        .send()
+        .await
+        .expect("create building with long name");
+    assert_eq!(
+        rejected.status(),
+        StatusCode::BAD_REQUEST,
+        "building name over 30 chars should be rejected"
+    );
+
+    let ok_name = "x".repeat(30);
+    let accepted = basic_auth(client.post(format!("{}/admin/buildings", h.base_url)))
+        .form(&[
+            ("name", ok_name.as_str()),
+            ("description", "ok"),
+            ("admin_name", "Alice"),
+            ("admin_email", "alice@example.com"),
+        ])
+        .send()
+        .await
+        .expect("create building with 30-char name");
+    assert_eq!(accepted.status(), StatusCode::SEE_OTHER);
+
+    // Apartment names are capped at 30 characters as well.
+    let id = create_building(&h, &client, "Musterblock").await;
+    let apartment_rejected =
+        basic_auth(client.post(format!("{}/admin/buildings/{id}/apartments", h.base_url)))
+            .form(&[("name", too_long.as_str()), ("description", "")])
+            .send()
+            .await
+            .expect("create apartment with long name");
+    assert_eq!(
+        apartment_rejected.status(),
+        StatusCode::BAD_REQUEST,
+        "apartment name over 30 chars should be rejected"
+    );
+
+    let apartment_accepted =
+        basic_auth(client.post(format!("{}/admin/buildings/{id}/apartments", h.base_url)))
+            .form(&[("name", ok_name.as_str()), ("description", "")])
+            .send()
+            .await
+            .expect("create apartment with 30-char name");
+    assert_eq!(apartment_accepted.status(), StatusCode::SEE_OTHER);
 }
 
 type Regex = regex::Regex;

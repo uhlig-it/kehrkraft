@@ -11,6 +11,7 @@ Kehrkraft is a web application that generates downloadable PDF calendars showing
   - unit tests
   - publish container
 * Deploy to soda or neon using a separate, private project (`kehrkraft-deployment`)
+* PDF layout must use both columns equally
 * Support path variables:
   - `TYPST_BIN_PATH` (optional) - Full path to the typst executable that is to be used for generating the PDF invoice. Defaults to the first `typst` in the `$PATH`. If set and non-empty, that value is returned directly. Otherwise, "typst" is found in the system PATH.
   - `TYPST_SPOOL_DIR` (optional) - Path to an existing directory where the typst file for the PDF invoice, together with the JSON containing billing data and the Factur-X XML, will be stored. This contents of this directory are ephemeral, but they may be useful for troubleshooting PDF generation. Defaults to `$TMPDIR`.
