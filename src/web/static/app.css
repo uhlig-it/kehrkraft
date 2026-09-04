@@ -390,6 +390,22 @@ details.disclosure form {
   margin-top: 0.9rem;
 }
 
+/* ---------- Alerts ---------- */
+
+.alert {
+  padding: 0.7rem 0.9rem;
+  border: 1px solid;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  margin-bottom: 0.9rem;
+}
+
+.alert-error {
+  background: var(--danger-soft);
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+
 /* ---------- Badges, code, misc ---------- */
 
 .badge {

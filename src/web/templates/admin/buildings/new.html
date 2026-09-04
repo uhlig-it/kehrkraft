@@ -12,26 +12,27 @@
 </div>
 
 <div class="card">
+  {% include "admin/_error.html" %}
   <form method="post" action="/admin/buildings">
     <label class="field">
       Name <span class="hint">(max. 30 characters)</span>
-      <input type="text" name="name" maxlength="30" required>
+      <input type="text" name="name" maxlength="30" value="{{ name }}" required>
     </label>
 
     <label class="field">
       Description <span class="hint">(optional)</span>
-      <input type="text" name="description">
+      <input type="text" name="description" value="{{ description }}">
     </label>
 
     <fieldset>
       <legend>Administrator (contact)</legend>
       <label class="field">
         Name
-        <input type="text" name="admin_name" required>
+        <input type="text" name="admin_name" value="{{ admin_name }}" required>
       </label>
       <label class="field">
         Email
-        <input type="email" name="admin_email" required>
+        <input type="email" name="admin_email" value="{{ admin_email }}" required>
       </label>
     </fieldset>
 

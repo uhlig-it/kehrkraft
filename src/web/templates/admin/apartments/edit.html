@@ -12,15 +12,16 @@
 </div>
 
 <div class="card">
+  {% include "admin/_error.html" %}
   <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/update">
     <label class="field">
       Name <span class="hint">(max. 30 characters)</span>
-      <input type="text" name="name" value="{{ apartment.name }}" maxlength="30" required />
+      <input type="text" name="name" value="{{ name }}" maxlength="30" required />
     </label>
 
     <label class="field">
       Description <span class="hint">(optional)</span>
-      <input type="text" name="description" value="{{ apartment.description }}" />
+      <input type="text" name="description" value="{{ description }}" />
     </label>
 
     <div class="form-actions">

@@ -51,24 +51,25 @@
   </table>
   {% endif %}
 
-  <details class="disclosure">
+  <details class="disclosure" {% if owner_form.is_some() %}open{% endif %}>
     <summary>Add Owner</summary>
+    {% if owner_form.is_some() %}{% include "admin/_error.html" %}{% endif %}
     <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships">
       <label class="field">
         Name
-        <input type="text" name="name" required />
+        <input type="text" name="name" value="{% if let Some(f) = owner_form %}{{ f.name }}{% endif %}" required />
       </label>
       <label class="field">
         Email
-        <input type="email" name="email" required />
+        <input type="email" name="email" value="{% if let Some(f) = owner_form %}{{ f.email }}{% endif %}" required />
       </label>
       <label class="field">
         Ownership Start Date
-        <input type="date" name="start_date" required />
+        <input type="date" name="start_date" value="{% if let Some(f) = owner_form %}{{ f.start_date }}{% endif %}" required />
       </label>
       <label class="field">
         Ownership End Date <span class="hint">(optional)</span>
-        <input type="date" name="end_date" />
+        <input type="date" name="end_date" value="{% if let Some(f) = owner_form %}{% if let Some(ed) = f.end_date %}{{ ed }}{% endif %}{% endif %}" />
       </label>
       <div class="form-actions">
         <button type="submit" class="btn btn-primary">Add Owner</button>
@@ -112,24 +113,25 @@
   </table>
   {% endif %}
 
-  <details class="disclosure">
+  <details class="disclosure" {% if tenant_form.is_some() %}open{% endif %}>
     <summary>Add Tenant</summary>
+    {% if tenant_form.is_some() %}{% include "admin/_error.html" %}{% endif %}
     <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies">
       <label class="field">
         Name
-        <input type="text" name="name" required />
+        <input type="text" name="name" value="{% if let Some(f) = tenant_form %}{{ f.name }}{% endif %}" required />
       </label>
       <label class="field">
         Email
-        <input type="email" name="email" required />
+        <input type="email" name="email" value="{% if let Some(f) = tenant_form %}{{ f.email }}{% endif %}" required />
       </label>
       <label class="field">
         Tenancy Start Date
-        <input type="date" name="start_date" required />
+        <input type="date" name="start_date" value="{% if let Some(f) = tenant_form %}{{ f.start_date }}{% endif %}" required />
       </label>
       <label class="field">
         Tenancy End Date <span class="hint">(optional)</span>
-        <input type="date" name="end_date" />
+        <input type="date" name="end_date" value="{% if let Some(f) = tenant_form %}{% if let Some(ed) = f.end_date %}{{ ed }}{% endif %}{% endif %}" />
       </label>
       <div class="form-actions">
         <button type="submit" class="btn btn-primary">Add Tenant</button>

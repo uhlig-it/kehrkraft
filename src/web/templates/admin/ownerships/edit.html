@@ -13,25 +13,26 @@
 </div>
 
 <div class="card">
+  {% include "admin/_error.html" %}
   <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ ownership.id }}">
     <label class="field">
       Name
-      <input type="text" name="name" value="{{ ownership.name }}" required />
+      <input type="text" name="name" value="{{ form.name }}" required />
     </label>
 
     <label class="field">
       Email
-      <input type="email" name="email" value="{{ ownership.email }}" required />
+      <input type="email" name="email" value="{{ form.email }}" required />
     </label>
 
     <label class="field">
       Ownership Start Date
-      <input type="date" name="start_date" value="{{ ownership.start_date }}" required />
+      <input type="date" name="start_date" value="{{ form.start_date }}" required />
     </label>
 
     <label class="field">
       Ownership End Date <span class="hint">(optional)</span>
-      <input type="date" name="end_date" value="{% if ownership.end_date.is_some() %}{{ ownership.end_date.as_ref().unwrap() }}{% endif %}" />
+      <input type="date" name="end_date" value="{% if let Some(ed) = form.end_date %}{{ ed }}{% endif %}" />
     </label>
 
     <div class="form-actions">

@@ -25,6 +25,12 @@ fn render(t: impl Template) -> axum::response::Response {
     }
 }
 
+/// Render a template as a 400 Bad Request; used to show a validation error
+/// inline on the page whose form produced it.
+fn render_bad_request(t: impl Template) -> axum::response::Response {
+    (axum::http::StatusCode::BAD_REQUEST, render(t)).into_response()
+}
+
 #[derive(Template)]
 #[template(path = "admin/buildings/index.html")]
 pub struct BuildingsIndexTemplate {
@@ -36,6 +42,12 @@ pub struct BuildingsIndexTemplate {
 #[template(path = "admin/buildings/new.html")]
 pub struct BuildingsNewTemplate {
     pub title: &'static str,
+    pub error: Option<String>,
+    /// Submitted values, preserved when validation fails.
+    pub name: String,
+    pub description: String,
+    pub admin_name: String,
+    pub admin_email: String,
 }
 
 #[derive(Template)]
@@ -63,6 +75,9 @@ pub struct BuildingsScheduleTemplate {
 pub struct ApartmentsNewTemplate {
     pub title: String,
     pub building: Building,
+    pub error: Option<String>,
+    pub name: String,
+    pub description: String,
 }
 
 #[derive(Template)]
@@ -71,6 +86,9 @@ pub struct ApartmentsEditTemplate {
     pub title: String,
     pub building: Building,
     pub apartment: Apartment,
+    pub error: Option<String>,
+    pub name: String,
+    pub description: String,
 }
 
 #[derive(Template)]
@@ -81,6 +99,11 @@ pub struct ApartmentsShowTemplate {
     pub apartment: Apartment,
     pub ownerships: Vec<Ownership>,
     pub tenancies: Vec<Tenancy>,
+    pub error: Option<String>,
+    /// Submitted values, preserved when an "Add Owner" submission fails.
+    pub owner_form: Option<OwnershipForm>,
+    /// Submitted values, preserved when an "Add Tenant" submission fails.
+    pub tenant_form: Option<TenancyForm>,
 }
 
 #[derive(Template)]
@@ -90,6 +113,9 @@ pub struct OwnershipsEditTemplate {
     pub building: Building,
     pub apartment: Apartment,
     pub ownership: Ownership,
+    pub error: Option<String>,
+    /// Input values: the record's values, or the submitted ones after a failed update.
+    pub form: OwnershipForm,
 }
 
 #[derive(Template)]
@@ -99,6 +125,9 @@ pub struct TenanciesEditTemplate {
     pub building: Building,
     pub apartment: Apartment,
     pub tenancy: Tenancy,
+    pub error: Option<String>,
+    /// Input values: the record's values, or the submitted ones after a failed update.
+    pub form: TenancyForm,
 }
 
 // --- Buildings ---
@@ -177,6 +206,11 @@ pub async fn buildings_index(State(pool): State<Db>) -> impl axum::response::Int
 pub async fn buildings_new() -> impl axum::response::IntoResponse {
     render(BuildingsNewTemplate {
         title: "New Building",
+        error: None,
+        name: String::new(),
+        description: String::new(),
+        admin_name: String::new(),
+        admin_email: String::new(),
     })
 }
 
@@ -184,18 +218,25 @@ pub async fn buildings_create(
     State(pool): State<Db>,
     Form(form): Form<CreateBuildingForm>,
 ) -> impl axum::response::IntoResponse {
-    if let Err(msg) = validate_name(&form.name) {
-        return (axum::http::StatusCode::BAD_REQUEST, msg).into_response();
-    }
-    if form.admin_name.trim().is_empty() {
-        return (
-            axum::http::StatusCode::BAD_REQUEST,
-            "Administrator name must not be empty",
-        )
-            .into_response();
-    }
-    if let Err(msg) = validate_email(&form.admin_email) {
-        return (axum::http::StatusCode::BAD_REQUEST, msg).into_response();
+    // First validation error, respecting the original check order.
+    let error = validate_name(&form.name)
+        .err()
+        .or_else(|| {
+            form.admin_name
+                .trim()
+                .is_empty()
+                .then(|| "Administrator name must not be empty".to_string())
+        })
+        .or_else(|| validate_email(&form.admin_email).err());
+    if let Some(msg) = error {
+        return render_bad_request(BuildingsNewTemplate {
+            title: "New Building",
+            error: Some(msg),
+            name: form.name,
+            description: form.description,
+            admin_name: form.admin_name,
+            admin_email: form.admin_email,
+        });
     }
 
     match queries::create_building(
@@ -352,6 +393,46 @@ async fn load_apartment_owned_by(
     }
 }
 
+/// Re-render the apartment page with an inline error, preserving the submitted
+/// form values. Used when an "Add Owner"/"Add Tenant" submission fails.
+async fn render_apartment_show_error(
+    pool: &Db,
+    building_id: &str,
+    apartment_id: &str,
+    error: String,
+    owner_form: Option<OwnershipForm>,
+    tenant_form: Option<TenancyForm>,
+) -> axum::response::Response {
+    let building = match load_building(pool, building_id).await {
+        Ok(b) => b,
+        Err(err) => return err.into_response(),
+    };
+    let apartment = match load_apartment_owned_by(pool, building_id, apartment_id).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    match (
+        queries::list_ownerships(pool, apartment_id).await,
+        queries::list_tenancies(pool, apartment_id).await,
+    ) {
+        (Ok(ownerships), Ok(tenancies)) => render_bad_request(ApartmentsShowTemplate {
+            title: format!("Apartment: {}", apartment.name),
+            building,
+            apartment,
+            ownerships,
+            tenancies,
+            error: Some(error),
+            owner_form,
+            tenant_form,
+        }),
+        _ => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to load apartment details",
+        )
+            .into_response(),
+    }
+}
+
 /// The apartments list lives on the building page now; keep old bookmarks working.
 pub async fn apartments_index_redirect(
     Path(building_id): Path<String>,
@@ -370,6 +451,9 @@ pub async fn apartments_new(
     render(ApartmentsNewTemplate {
         title: format!("New Apartment: {}", building.name),
         building,
+        error: None,
+        name: String::new(),
+        description: String::new(),
     })
 }
 
@@ -379,7 +463,17 @@ pub async fn apartments_create(
     Form(form): Form<ApartmentForm>,
 ) -> impl axum::response::IntoResponse {
     if let Err(msg) = validate_name(&form.name) {
-        return (axum::http::StatusCode::BAD_REQUEST, msg).into_response();
+        let building = match load_building(&pool, &building_id).await {
+            Ok(b) => b,
+            Err(err) => return err.into_response(),
+        };
+        return render_bad_request(ApartmentsNewTemplate {
+            title: format!("New Apartment: {}", building.name),
+            building,
+            error: Some(msg),
+            name: form.name,
+            description: form.description,
+        });
     }
 
     match queries::create_apartment(&pool, &building_id, &form.name, &form.description).await {
@@ -408,10 +502,15 @@ pub async fn apartments_edit(
         Ok(a) => a,
         Err(err) => return err.into_response(),
     };
+    let name = apartment.name.clone();
+    let description = apartment.description.clone();
     render(ApartmentsEditTemplate {
         title: format!("Edit Apartment: {}", apartment.name),
         building,
         apartment,
+        error: None,
+        name,
+        description,
     })
 }
 
@@ -438,6 +537,9 @@ pub async fn apartments_show(
             apartment,
             ownerships,
             tenancies,
+            error: None,
+            owner_form: None,
+            tenant_form: None,
         }),
         _ => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -452,11 +554,23 @@ pub async fn apartments_update(
     State(pool): State<Db>,
     Form(form): Form<ApartmentForm>,
 ) -> impl axum::response::IntoResponse {
-    if let Err(err) = load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
-        return err.into_response();
-    }
+    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
     if let Err(msg) = validate_name(&form.name) {
-        return (axum::http::StatusCode::BAD_REQUEST, msg).into_response();
+        let building = match load_building(&pool, &building_id).await {
+            Ok(b) => b,
+            Err(err) => return err.into_response(),
+        };
+        return render_bad_request(ApartmentsEditTemplate {
+            title: format!("Edit Apartment: {}", apartment.name),
+            building,
+            apartment,
+            error: Some(msg),
+            name: form.name,
+            description: form.description,
+        });
     }
 
     match queries::update_apartment(&pool, &apartment_id, &form.name, &form.description).await {
@@ -507,7 +621,15 @@ pub async fn ownerships_create(
     }
     let end_opt = normalize_end_date(form.end_date.as_deref());
     if let Err(msg) = validate_person_input(&form.name, &form.email, &form.start_date, end_opt) {
-        return (axum::http::StatusCode::BAD_REQUEST, msg).into_response();
+        return render_apartment_show_error(
+            &pool,
+            &building_id,
+            &apartment_id,
+            msg,
+            Some(form),
+            None,
+        )
+        .await;
     }
 
     let start = NaiveDate::parse_from_str(&form.start_date, "%Y-%m-%d").expect("validated date");
@@ -520,11 +642,15 @@ pub async fn ownerships_create(
                 .iter()
                 .any(|o| overlaps_ownership(o, start, end, None))
             {
-                return (
-                    axum::http::StatusCode::BAD_REQUEST,
-                    "Ownership overlaps an existing ownership of this apartment",
+                return render_apartment_show_error(
+                    &pool,
+                    &building_id,
+                    &apartment_id,
+                    "Ownership overlaps an existing ownership of this apartment".to_string(),
+                    Some(form),
+                    None,
                 )
-                    .into_response();
+                .await;
             }
         }
         Err(_) => {
@@ -575,11 +701,19 @@ pub async fn ownerships_edit(
             if ownership.apartment_id != apartment_id {
                 return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response();
             }
+            let form = OwnershipForm {
+                name: ownership.name.clone(),
+                email: ownership.email.clone(),
+                start_date: ownership.start_date.clone(),
+                end_date: ownership.end_date.clone(),
+            };
             render(OwnershipsEditTemplate {
                 title: format!("Edit Owner {}", ownership.name),
                 building,
                 apartment,
                 ownership,
+                error: None,
+                form,
             })
         }
         Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
@@ -591,27 +725,54 @@ pub async fn ownerships_edit(
     }
 }
 
+/// Re-render the ownership edit page with an inline error, preserving the
+/// submitted form values.
+async fn render_ownership_edit_error(
+    pool: &Db,
+    building_id: &str,
+    apartment: &Apartment,
+    ownership: &Ownership,
+    error: String,
+    form: OwnershipForm,
+) -> axum::response::Response {
+    let building = match load_building(pool, building_id).await {
+        Ok(b) => b,
+        Err(err) => return err.into_response(),
+    };
+    render_bad_request(OwnershipsEditTemplate {
+        title: format!("Edit Owner {}", ownership.name),
+        building,
+        apartment: apartment.clone(),
+        ownership: ownership.clone(),
+        error: Some(error),
+        form,
+    })
+}
+
 pub async fn ownerships_update(
     Path((building_id, apartment_id, ownership_id)): Path<(String, String, String)>,
     State(pool): State<Db>,
     Form(form): Form<OwnershipForm>,
 ) -> impl axum::response::IntoResponse {
-    if let Err(err) = load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
-        return err.into_response();
-    }
+    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
     // Ensure the ownership belongs to this apartment
-    match queries::get_ownership(&pool, &ownership_id).await {
+    let ownership = match queries::get_ownership(&pool, &ownership_id).await {
         Ok(Some(existing)) => {
             if existing.apartment_id != apartment_id {
                 return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response();
             }
+            existing
         }
         _ => return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
-    }
+    };
 
     let end_opt = normalize_end_date(form.end_date.as_deref());
     if let Err(msg) = validate_person_input(&form.name, &form.email, &form.start_date, end_opt) {
-        return (axum::http::StatusCode::BAD_REQUEST, msg).into_response();
+        return render_ownership_edit_error(&pool, &building_id, &apartment, &ownership, msg, form)
+            .await;
     }
 
     let start = NaiveDate::parse_from_str(&form.start_date, "%Y-%m-%d").expect("validated date");
@@ -624,11 +785,15 @@ pub async fn ownerships_update(
                 .iter()
                 .any(|o| overlaps_ownership(o, start, end, Some(&ownership_id)))
             {
-                return (
-                    axum::http::StatusCode::BAD_REQUEST,
-                    "Ownership overlaps an existing ownership of this apartment",
+                return render_ownership_edit_error(
+                    &pool,
+                    &building_id,
+                    &apartment,
+                    &ownership,
+                    "Ownership overlaps an existing ownership of this apartment".to_string(),
+                    form,
                 )
-                    .into_response();
+                .await;
             }
         }
         Err(_) => {
@@ -718,7 +883,15 @@ pub async fn tenancies_create(
     }
     let end_opt = normalize_end_date(form.end_date.as_deref());
     if let Err(msg) = validate_person_input(&form.name, &form.email, &form.start_date, end_opt) {
-        return (axum::http::StatusCode::BAD_REQUEST, msg).into_response();
+        return render_apartment_show_error(
+            &pool,
+            &building_id,
+            &apartment_id,
+            msg,
+            None,
+            Some(form),
+        )
+        .await;
     }
 
     let start = NaiveDate::parse_from_str(&form.start_date, "%Y-%m-%d").expect("validated date");
@@ -731,11 +904,15 @@ pub async fn tenancies_create(
                 .iter()
                 .any(|t| overlaps_tenancy(t, start, end, None))
             {
-                return (
-                    axum::http::StatusCode::BAD_REQUEST,
-                    "Tenancy overlaps an existing tenancy of this apartment",
+                return render_apartment_show_error(
+                    &pool,
+                    &building_id,
+                    &apartment_id,
+                    "Tenancy overlaps an existing tenancy of this apartment".to_string(),
+                    None,
+                    Some(form),
                 )
-                    .into_response();
+                .await;
             }
         }
         Err(_) => {
@@ -786,11 +963,19 @@ pub async fn tenancies_edit(
             if tenancy.apartment_id != apartment_id {
                 return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response();
             }
+            let form = TenancyForm {
+                name: tenancy.name.clone(),
+                email: tenancy.email.clone(),
+                start_date: tenancy.start_date.clone(),
+                end_date: tenancy.end_date.clone(),
+            };
             render(TenanciesEditTemplate {
                 title: format!("Edit Tenant {}", tenancy.name),
                 building,
                 apartment,
                 tenancy,
+                error: None,
+                form,
             })
         }
         Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
@@ -844,27 +1029,54 @@ fn overlaps_ownership(
     record_overlaps(&o.start_date, o.end_date.as_deref(), start, end)
 }
 
+/// Re-render the tenancy edit page with an inline error, preserving the
+/// submitted form values.
+async fn render_tenancy_edit_error(
+    pool: &Db,
+    building_id: &str,
+    apartment: &Apartment,
+    tenancy: &Tenancy,
+    error: String,
+    form: TenancyForm,
+) -> axum::response::Response {
+    let building = match load_building(pool, building_id).await {
+        Ok(b) => b,
+        Err(err) => return err.into_response(),
+    };
+    render_bad_request(TenanciesEditTemplate {
+        title: format!("Edit Tenant {}", tenancy.name),
+        building,
+        apartment: apartment.clone(),
+        tenancy: tenancy.clone(),
+        error: Some(error),
+        form,
+    })
+}
+
 pub async fn tenancies_update(
     Path((building_id, apartment_id, tenancy_id)): Path<(String, String, String)>,
     State(pool): State<Db>,
     Form(form): Form<TenancyForm>,
 ) -> impl axum::response::IntoResponse {
-    if let Err(err) = load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
-        return err.into_response();
-    }
+    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
     // Ensure the tenancy belongs to this apartment
-    match queries::get_tenancy(&pool, &tenancy_id).await {
+    let tenancy = match queries::get_tenancy(&pool, &tenancy_id).await {
         Ok(Some(existing)) => {
             if existing.apartment_id != apartment_id {
                 return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response();
             }
+            existing
         }
         _ => return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
-    }
+    };
 
     let end_opt = normalize_end_date(form.end_date.as_deref());
     if let Err(msg) = validate_person_input(&form.name, &form.email, &form.start_date, end_opt) {
-        return (axum::http::StatusCode::BAD_REQUEST, msg).into_response();
+        return render_tenancy_edit_error(&pool, &building_id, &apartment, &tenancy, msg, form)
+            .await;
     }
 
     let start = NaiveDate::parse_from_str(&form.start_date, "%Y-%m-%d").expect("validated date");
@@ -877,11 +1089,15 @@ pub async fn tenancies_update(
                 .iter()
                 .any(|t| overlaps_tenancy(t, start, end, Some(&tenancy_id)))
             {
-                return (
-                    axum::http::StatusCode::BAD_REQUEST,
-                    "Tenancy overlaps an existing tenancy of this apartment",
+                return render_tenancy_edit_error(
+                    &pool,
+                    &building_id,
+                    &apartment,
+                    &tenancy,
+                    "Tenancy overlaps an existing tenancy of this apartment".to_string(),
+                    form,
                 )
-                    .into_response();
+                .await;
             }
         }
         Err(_) => {
