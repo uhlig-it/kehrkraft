@@ -6,7 +6,6 @@ Kehrkraft is a web application that generates downloadable PDF calendars showing
 
 # TODO
 
-* Bug: overlapping ownership must be rejected at DB level
 * Error messages (e.g. "Tenancy overlaps an existing tenancy of this apartment") must be rendered, perhaps inline
 * Inherit CI from rostfacto
   - unit tests
@@ -279,6 +278,7 @@ Repository structure (evolves with milestones):
   - Migration 0002 renames `plans` → `buildings` (+ `description` column), `plan_administrators` → `building_administrators`, creates `apartments`, `ownerships`, `tenancies`, and drops `tenants`.
   - Scheduling: per week, active owners are ownerships that contain the whole week (start_date <= week_start AND (end_date IS NULL OR end_date >= week_end)), sorted by (start_date asc, name asc); apartments without an active owner are skipped that week; week offset = (rotation_seed + week_index) % active_len (unchanged); if the chosen apartment has a tenancy containing that week, the assignee is the tenant, otherwise the owner.
   - Invariant: at most one active tenancy per apartment — overlapping tenancies are rejected on create/update with HTTP 400 (also covered end-to-end).
+  - Invariant: at most one active ownership per apartment — overlapping ownerships are rejected on create/update with HTTP 400 (also covered end-to-end).
   - Validation: building and apartment names max. 30 chars; descriptions unlimited (domain model).
   - Admin UI: `/admin/buildings/{id}` shows description and apartment link; `/admin/buildings/{id}/apartments` lists apartments; the apartment page shows ownerships and tenancies with inline add forms plus edit/delete; the old tenant pages were removed.
 - Deliverables:
