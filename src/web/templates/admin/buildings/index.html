@@ -1,36 +1,42 @@
 {% extends "base.html" %}
 
-{% block title %}Buildings{% endblock %}
+{% block title %}{{ title }} · Kehrkraft{% endblock %}
 
 {% block content %}
-<h1>Buildings</h1>
-
-<p><a href="/admin/buildings/new">Create New Building</a></p>
+<div class="page-header">
+  <h1>Buildings</h1>
+  <a class="btn btn-primary" href="/admin/buildings/new">New Building</a>
+</div>
 
 {% if buildings.len() == 0 %}
-<p>No buildings yet.</p>
+<div class="card empty-state">
+  <p>No buildings yet.</p>
+  <p><a class="btn btn-primary" href="/admin/buildings/new">Create your first building</a></p>
+</div>
 {% else %}
-<table role="grid">
-  <thead>
-    <tr>
-      <th>Name</th>
-      <th>Secret URL</th>
-      <th>Actions</th>
-    </tr>
-  </thead>
-  <tbody>
-  {% for b in buildings %}
-    <tr>
-      <td><a href="/admin/buildings/{{ b.id }}">{{ b.name }}</a></td>
-      <td><code>/p/{{ b.secret_slug }}/kehrwoche.pdf</code></td>
-      <td>
-        <form method="post" action="/admin/buildings/{{ b.id }}/delete" style="display:inline">
-          <button type="submit">Delete</button>
-        </form>
-      </td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
+<div class="card">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Public PDF URL</th>
+        <th class="col-actions"></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for b in buildings %}
+      <tr>
+        <td><a class="link-strong" href="/admin/buildings/{{ b.id }}">{{ b.name }}</a></td>
+        <td><a href="/p/{{ b.secret_slug }}/kehrwoche.pdf"><code class="code">/p/{{ b.secret_slug }}/kehrwoche.pdf</code></a></td>
+        <td class="col-actions">
+          <form class="inline" method="post" action="/admin/buildings/{{ b.id }}/delete" onsubmit="return confirm('Delete this building and all its apartments?');">
+            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% endif %}
 {% endblock %}

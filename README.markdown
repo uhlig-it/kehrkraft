@@ -6,16 +6,14 @@ Kehrkraft is a web application that generates downloadable PDF calendars showing
 
 # TODO
 
-* Some links better be buttons
+* List people and their roles (admin, owner, tenant) and their objects
 * Inherit CI from rostfacto
-* Replace PicoCSS with plain vanilla CSS
 * Internationalization: Keep strings ready for EN/DE; "Kehrwoche" as canonical term. Collect all strings that need translation and suggest German alternatives, so that we can support both languages
 * iCal feed for a plan
-* Read-only JSON feed for hardware integrations
 * Reminders that duty is due for a tenant / owner
 * Switch to proper auth system
 * Hourly database backup to S3 with retention
-* Home page
+* Read-only JSON feed for hardware integrations
 
 # Domain Model
 
@@ -59,13 +57,13 @@ This runs:
 
 - Unit tests (DB `queries`, migrations, scheduler, validation).
 - A PDF integration test that boots the real router, creates a building, and fetches `/p/{slug}/kehrwoche.pdf` over HTTP, asserting the body is a non-empty PDF.
-- End-to-end tests (`tests/e2e/`) that drive the full app over HTTP: Basic Auth (401 without, dashboard with), create building + apartment + owner + tenancy (including rejection of overlapping tenancies), schedule preview, and the public PDF fetch.
+- End-to-end tests (`tests/e2e/`) that drive the full app over HTTP: Basic Auth (401 without; buildings home page with), create building + apartment + owner + tenancy (including rejection of overlapping tenancies), schedule preview, and the public PDF fetch.
 
 Typst is required only for the two PDF tests; those skip automatically when the `typst` binary is missing. Install it via `brew install typst`, or see https://github.com/typst/typst for other platforms. The CI workflow installs Typst as well.
 
 # Implementation
 
-- Admin pages use a PicoCSS-based master template.
+- Admin pages use a hand-rolled stylesheet (`/static/app.css`, embedded into the binary); no CSS framework.
 - Admin authentication uses HTTP Basic Auth (credentials from environment variables).
 - PDF rendering is done via Typst.
 - The app listens on plain HTTP; port is read from env var PORT, otherwise binds to an OS-assigned ephemeral port (>1024).
@@ -115,7 +113,7 @@ Repository structure (evolves with milestones):
     - admin.rs
     - pdf.rs
     - templates/
-      - base.html (PicoCSS-based master)
+      - base.html (custom-CSS master)
       - admin/*.html
   - db/
     - mod.rs

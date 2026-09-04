@@ -1,43 +1,49 @@
 {% extends "base.html" %}
 
-{% block title %}{{ title }}{% endblock %}
+{% block title %}{{ title }} · Kehrkraft{% endblock %}
 
 {% block content %}
-<h1>{{ title }}</h1>
+<nav class="breadcrumb">
+  <a href="/admin">Buildings</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><span>Schedule</span>
+</nav>
 
-<p>
-  Public PDF URL:
-  <a href="/p/{{ building.secret_slug }}/kehrwoche.pdf">/p/{{ building.secret_slug }}/kehrwoche.pdf</a>
-</p>
+<div class="page-header">
+  <h1>Schedule Preview: {{ building.name }} ({{ year }})</h1>
+</div>
 
-<table role="grid">
-  <thead>
-    <tr>
-      <th>Woche</th>
-      <th>von</th>
-      <th>bis</th>
-      <th>Name</th>
-    </tr>
-  </thead>
-  <tbody>
-  {% for w in schedule %}
-    <tr>
-      <td>{{ w.iso_week }}</td>
-      <td>{{ w.start }}</td>
-      <td>{{ w.end }}</td>
-      <td>
-        {% match w.assignee_name %}
-          {% when Some with (n) %}
-            {{ n }}{% if w.delegated %} <em>(tenant)</em>{% endif %}
-          {% when None %}<em>Unassigned</em>
-        {% endmatch %}
-      </td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
+<section class="card">
+  <p class="muted">
+    Public PDF:
+    <a href="/p/{{ building.secret_slug }}/kehrwoche.pdf"><code class="code">/p/{{ building.secret_slug }}/kehrwoche.pdf</code></a>
+  </p>
 
-<p>
-  <a href="/admin/buildings/{{ building.id }}">Back to Building</a>
-</p>
+  <table class="table table-compact">
+    <thead>
+      <tr>
+        <th>Woche</th>
+        <th>von</th>
+        <th>bis</th>
+        <th>Name</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for w in schedule %}
+      <tr>
+        <td>{{ w.iso_week }}</td>
+        <td>{{ w.start }}</td>
+        <td>{{ w.end }}</td>
+        <td>
+          {% match w.assignee_name %}
+            {% when Some with (n) %}
+              {{ n }}{% if w.delegated %} <span class="badge">tenant</span>{% endif %}
+            {% when None %}<span class="badge badge-muted">Unassigned</span>
+          {% endmatch %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<p><a href="/admin/buildings/{{ building.id }}">Back to Building</a></p>
 {% endblock %}

@@ -23,6 +23,7 @@ use crate::db::Db;
 use crate::web::{admin, pdf};
 
 const KEHRKRAFT_SVG: &[u8] = include_bytes!("../kehrkraft.svg");
+const APP_CSS: &[u8] = include_bytes!("web/static/app.css");
 
 async fn healthz() -> &'static str {
     "ok"
@@ -30,6 +31,16 @@ async fn healthz() -> &'static str {
 
 async fn logo_svg() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "image/svg+xml")], KEHRKRAFT_SVG)
+}
+
+async fn app_css() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        APP_CSS,
+    )
 }
 
 /// Basic Auth gate for the admin area; returns 401 + WWW-Authenticate on failure.
@@ -141,7 +152,8 @@ async fn rate_limit(req: Request<Body>, next: Next) -> Response {
 /// so the rate limiter can see client addresses.
 pub fn build_router(pool: Db, admin_user: String, admin_pass: String) -> Router {
     let admin_router = Router::new()
-        .route("/admin", get(admin::dashboard))
+        .route("/", get(admin::buildings_index))
+        .route("/admin", get(admin::buildings_index))
         .route(
             "/admin/buildings",
             get(admin::buildings_index).post(admin::buildings_create),
@@ -158,7 +170,7 @@ pub fn build_router(pool: Db, admin_user: String, admin_pass: String) -> Router 
         )
         .route(
             "/admin/buildings/{id}/apartments",
-            get(admin::apartments_index).post(admin::apartments_create),
+            get(admin::apartments_index_redirect).post(admin::apartments_create),
         )
         .route(
             "/admin/buildings/{id}/apartments/new",
@@ -167,6 +179,10 @@ pub fn build_router(pool: Db, admin_user: String, admin_pass: String) -> Router 
         .route(
             "/admin/buildings/{id}/apartments/{apartment_id}",
             get(admin::apartments_show),
+        )
+        .route(
+            "/admin/buildings/{id}/apartments/{apartment_id}/edit",
+            get(admin::apartments_edit),
         )
         .route(
             "/admin/buildings/{id}/apartments/{apartment_id}/update",
@@ -222,6 +238,7 @@ pub fn build_router(pool: Db, admin_user: String, admin_pass: String) -> Router 
         .merge(admin_router)
         .merge(public_router)
         .route("/kehrkraft.svg", get(logo_svg))
+        .route("/static/app.css", get(app_css))
         .layer(middleware::from_fn(security_headers))
         .layer(tower_http::limit::RequestBodyLimitLayer::new(1_000_000))
         .layer(tower_http::compression::CompressionLayer::new())

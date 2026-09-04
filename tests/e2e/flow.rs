@@ -107,10 +107,35 @@ async fn admin_requires_basic_auth() {
         .await
         .expect("authenticated request");
     assert_eq!(auth.status(), StatusCode::OK);
-    let body = auth.text().await.expect("dashboard body");
+    let body = auth.text().await.expect("admin body");
     assert!(
-        body.contains("Admin Dashboard"),
-        "expected dashboard, got {body:?}"
+        body.contains("Buildings"),
+        "expected buildings home page, got {body:?}"
+    );
+
+    // The site root is the same admin-only buildings home page.
+    let root = basic_auth(client.get(format!("{}/", h.base_url)))
+        .send()
+        .await
+        .expect("authenticated root request");
+    assert_eq!(root.status(), StatusCode::OK);
+    assert!(
+        root.text().await.expect("root body").contains("Buildings"),
+        "expected buildings home page at /"
+    );
+
+    // Static stylesheet is served without authentication.
+    let css = reqwest::Client::new()
+        .get(format!("{}/static/app.css", h.base_url))
+        .send()
+        .await
+        .expect("stylesheet request");
+    assert_eq!(css.status(), StatusCode::OK);
+    assert_eq!(
+        css.headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("text/css; charset=utf-8")
     );
 }
 
@@ -149,15 +174,31 @@ async fn create_building_apartment_owner_tenancy_flow() {
     // Add an apartment.
     let apartment_id = create_apartment(&h, &client, &id, "EG links").await;
 
-    // Apartment page lists it under the building.
-    let apartments =
-        basic_auth(client.get(format!("{}/admin/buildings/{id}/apartments", h.base_url)))
-            .send()
-            .await
-            .expect("fetch apartments");
-    assert_eq!(apartments.status(), StatusCode::OK);
-    let body = apartments.text().await.expect("apartments body");
-    assert!(body.contains("EG links"), "apartment listed, got {body:?}");
+    // The legacy apartments index now redirects to the building page.
+    let legacy = basic_auth(client.get(format!("{}/admin/buildings/{id}/apartments", h.base_url)))
+        .send()
+        .await
+        .expect("fetch legacy apartments index");
+    assert_eq!(legacy.status(), StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(
+        legacy
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok()),
+        Some(format!("/admin/buildings/{id}").as_str())
+    );
+
+    // Apartments are listed right on the building page.
+    let building_page = basic_auth(client.get(format!("{}/admin/buildings/{id}", h.base_url)))
+        .send()
+        .await
+        .expect("fetch building page");
+    assert_eq!(building_page.status(), StatusCode::OK);
+    let body = building_page.text().await.expect("building body");
+    assert!(
+        body.contains("EG links"),
+        "apartment listed on building page, got {body:?}"
+    );
 
     // Record an owner and a tenant for the apartment.
     let apt_url = format!(
@@ -187,7 +228,7 @@ async fn create_building_apartment_owner_tenancy_flow() {
     assert_eq!(tenant.status(), StatusCode::SEE_OTHER, "tenancy redirects");
 
     // The apartment page shows owner and tenant.
-    let show = basic_auth(client.get(apt_url))
+    let show = basic_auth(client.get(apt_url.clone()))
         .send()
         .await
         .expect("fetch apartment");
@@ -198,6 +239,22 @@ async fn create_building_apartment_owner_tenancy_flow() {
         "owner listed, got {body:?}"
     );
     assert!(body.contains("Bob Mieter"), "tenant listed");
+
+    // The edit form lives on its own page, linked from the apartment page.
+    let edit_path = format!("/admin/buildings/{id}/apartments/{apartment_id}/edit");
+    assert!(body.contains(&edit_path), "edit link on apartment page");
+    let edit = basic_auth(client.get(format!("{}{edit_path}", h.base_url)))
+        .send()
+        .await
+        .expect("fetch apartment edit page");
+    assert_eq!(edit.status(), StatusCode::OK);
+    let edit_body = edit.text().await.expect("edit body");
+    assert!(
+        edit_body.contains(&format!(
+            "action=\"/admin/buildings/{id}/apartments/{apartment_id}/update\""
+        )),
+        "edit form posts to update, got {edit_body:?}"
+    );
 }
 
 #[tokio::test]

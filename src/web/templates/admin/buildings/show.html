@@ -1,43 +1,112 @@
 {% extends "base.html" %}
 
-{% block title %}{{ title }}{% endblock %}
+{% block title %}{{ title }} · Kehrkraft{% endblock %}
 
 {% block content %}
-<h1>{{ building.name }}</h1>
+<nav class="breadcrumb">
+  <a href="/admin">Buildings</a><span class="sep">/</span><span>{{ building.name }}</span>
+</nav>
 
-{% if building.description.len() > 0 %}
-<p>{{ building.description }}</p>
-{% endif %}
+<div class="page-header">
+  <h1>{{ building.name }}</h1>
+  {% if building.description.len() > 0 %}
+  <p class="subtitle">{{ building.description }}</p>
+  {% endif %}
+</div>
 
-<p>
-  Public PDF URL:
-  <a href="/p/{{ building.secret_slug }}/kehrwoche.pdf">/p/{{ building.secret_slug }}/kehrwoche.pdf</a>
-</p>
+<section class="card">
+  <div class="card-header">
+    <h2>Apartments</h2>
+    <a class="btn btn-primary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/new">Add Apartment</a>
+  </div>
+  {% if apartments.len() == 0 %}
+  <p class="muted">No apartments yet.</p>
+  {% else %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Description</th>
+        <th class="col-actions"></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for a in apartments %}
+      <tr>
+        <td><a class="link-strong" href="/admin/buildings/{{ building.id }}/apartments/{{ a.id }}">{{ a.name }}</a></td>
+        <td>{{ a.description }}</td>
+        <td class="col-actions">
+          <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ a.id }}/delete" onsubmit="return confirm('Delete this apartment?');">
+            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
 
-<h2>Administrators</h2>
-{% if admins.len() == 0 %}
-<p>No administrators.</p>
-{% else %}
-<ul>
-  {% for a in admins %}
+<section class="card">
+  <h2>Public PDF</h2>
+  <p class="muted">Read-only link for residents &mdash; no login required:</p>
+  <p><a href="/p/{{ building.secret_slug }}/kehrwoche.pdf"><code class="code">/p/{{ building.secret_slug }}/kehrwoche.pdf</code></a></p>
+</section>
+
+<section class="card">
+  <h2>Administrators</h2>
+  {% if admins.len() == 0 %}
+  <p class="muted">No administrators.</p>
+  {% else %}
+  <ul class="person-list">
+    {% for a in admins %}
     <li>{{ a.name }} &lt;{{ a.email }}&gt;</li>
-  {% endfor %}
-</ul>
-{% endif %}
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
 
-<p>
-  <a href="/admin/buildings/{{ building.id }}/apartments">Manage Apartments</a>
-</p>
+<section class="card">
+  <div class="card-header">
+    <h2>Schedule &mdash; upcoming weeks</h2>
+    <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/schedule">Full {{ year }} schedule</a>
+  </div>
+  {% if schedule.len() == 0 %}
+  <p class="muted">No upcoming weeks this year.</p>
+  {% else %}
+  <table class="table table-compact">
+    <thead>
+      <tr>
+        <th>Woche</th>
+        <th>von</th>
+        <th>bis</th>
+        <th>Name</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for w in schedule %}
+      <tr>
+        <td>{{ w.iso_week }}</td>
+        <td>{{ w.start }}</td>
+        <td>{{ w.end }}</td>
+        <td>
+          {% match w.assignee_name %}
+            {% when Some with (n) %}
+              {{ n }}{% if w.delegated %} <span class="badge">tenant</span>{% endif %}
+            {% when None %}<span class="badge badge-muted">Unassigned</span>
+          {% endmatch %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
 
-<p>
-  <a href="/admin/buildings/{{ building.id }}/schedule">Preview Schedule (HTML)</a>
-</p>
-
-<p>
-  <a href="/admin/buildings">Back to Buildings</a>
-</p>
-
-<form method="post" action="/admin/buildings/{{ building.id }}/delete">
-  <button type="submit">Delete Building</button>
-</form>
+<section class="card danger-zone">
+  <h2>Danger zone</h2>
+  <form method="post" action="/admin/buildings/{{ building.id }}/delete" onsubmit="return confirm('Delete this building and all its apartments?');">
+    <button type="submit" class="btn btn-danger">Delete Building</button>
+  </form>
+</section>
 {% endblock %}

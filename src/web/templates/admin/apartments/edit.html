@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} · Kehrkraft{% endblock %}
+
+{% block content %}
+<nav class="breadcrumb">
+  <a href="/admin">Buildings</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">{{ apartment.name }}</a><span class="sep">/</span><span>Edit</span>
+</nav>
+
+<div class="page-header">
+  <h1>Edit Apartment</h1>
+</div>
+
+<div class="card">
+  <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/update">
+    <label class="field">
+      Name <span class="hint">(max. 30 characters)</span>
+      <input type="text" name="name" value="{{ apartment.name }}" maxlength="30" required />
+    </label>
+
+    <label class="field">
+      Description <span class="hint">(optional)</span>
+      <input type="text" name="description" value="{{ apartment.description }}" />
+    </label>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">Save Apartment</button>
+      <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

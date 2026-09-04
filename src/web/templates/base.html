@@ -4,39 +4,23 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Kehrkraft{% endblock %}</title>
-    <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@2/css/pico.min.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400..900&display=swap" rel="stylesheet">
-    <style>
-      :root {
-        --pico-form-element-spacing-vertical: 0.35rem;
-        --pico-form-element-spacing-horizontal: 0.75rem;
-        --pico-font-size: 1rem;
-      }
-
-      .orbitron-bold {
-        font-family: "Orbitron", sans-serif;
-        font-optical-sizing: auto;
-        font-weight: 700;
-        font-style: normal;
-        color: #444f57;
-      }
-    </style>
+    <link rel="stylesheet" href="/static/app.css">
   </head>
   <body>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a class="brand" href="/admin">
+          <img src="/kehrkraft.svg" alt="Kehrkraft logo" class="brand-logo">
+          <span class="brand-name">Kehrkraft</span>
+        </a>
+        <nav class="topnav">
+          <a href="/admin">Buildings</a>
+        </nav>
+      </div>
+    </header>
     <main class="container">
-      <header>
-        <h1 class="orbitron-bold" style="margin-left: -30px;">
-          <a href="/" style="text-decoration: none; color: inherit;">
-            <img src="/kehrkraft.svg" alt="Kehrkraft logo" style="height: 7rem; vertical-align: middle;">
-            <span style="margin-left: -30px;">
-              {% block header %}Kehrkraft{% endblock %}
-            </span>
-          </a>
-        </h1>
-      </header>
       {% block content %}{% endblock %}
     </main>
+    <footer class="footer">Kehrkraft &mdash; Kehrwoche Cleaning Schedules</footer>
   </body>
 </html>

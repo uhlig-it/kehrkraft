@@ -26,18 +26,6 @@ fn render(t: impl Template) -> axum::response::Response {
 }
 
 #[derive(Template)]
-#[template(path = "admin/dashboard.html")]
-pub struct DashboardTemplate<'a> {
-    pub title: &'a str,
-}
-
-pub async fn dashboard() -> impl axum::response::IntoResponse {
-    render(DashboardTemplate {
-        title: "Admin Dashboard",
-    })
-}
-
-#[derive(Template)]
 #[template(path = "admin/buildings/index.html")]
 pub struct BuildingsIndexTemplate {
     pub title: &'static str,
@@ -56,6 +44,9 @@ pub struct BuildingsShowTemplate {
     pub title: String,
     pub building: Building,
     pub admins: Vec<BuildingAdministrator>,
+    pub apartments: Vec<Apartment>,
+    pub year: i32,
+    pub schedule: Vec<WeekAssignment>,
 }
 
 #[derive(Template)]
@@ -68,18 +59,18 @@ pub struct BuildingsScheduleTemplate {
 }
 
 #[derive(Template)]
-#[template(path = "admin/apartments/index.html")]
-pub struct ApartmentsIndexTemplate {
-    pub title: String,
-    pub building: Building,
-    pub apartments: Vec<Apartment>,
-}
-
-#[derive(Template)]
 #[template(path = "admin/apartments/new.html")]
 pub struct ApartmentsNewTemplate {
     pub title: String,
     pub building: Building,
+}
+
+#[derive(Template)]
+#[template(path = "admin/apartments/edit.html")]
+pub struct ApartmentsEditTemplate {
+    pub title: String,
+    pub building: Building,
+    pub apartment: Apartment,
 }
 
 #[derive(Template)]
@@ -230,11 +221,46 @@ pub async fn buildings_show(
     State(pool): State<Db>,
 ) -> impl axum::response::IntoResponse {
     match queries::get_building(&pool, &id).await {
-        Ok(Some((building, admins))) => render(BuildingsShowTemplate {
-            title: format!("Building: {}", building.name),
-            building,
-            admins,
-        }),
+        Ok(Some((building, admins))) => {
+            let apartments = match queries::list_apartments(&pool, &building.id).await {
+                Ok(apartments) => apartments,
+                Err(_) => {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "Failed to load apartments",
+                    )
+                        .into_response()
+                }
+            };
+            // Compact schedule: only the remaining weeks of the current year.
+            let year = Local::now().date_naive().year();
+            let schedule: Vec<WeekAssignment> =
+                match scheduler::schedule_for_year(&building.id, year, &pool).await {
+                    Ok(weeks) => {
+                        let today = Local::now().date_naive();
+                        weeks
+                            .into_iter()
+                            .filter(|w| w.end >= today)
+                            .take(12)
+                            .collect()
+                    }
+                    Err(_) => {
+                        return (
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                            "Failed to compute schedule",
+                        )
+                            .into_response()
+                    }
+                };
+            render(BuildingsShowTemplate {
+                title: format!("Building: {}", building.name),
+                building,
+                admins,
+                apartments,
+                year,
+                schedule,
+            })
+        }
         Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -279,7 +305,7 @@ pub async fn buildings_delete(
     State(pool): State<Db>,
 ) -> impl axum::response::IntoResponse {
     let _ = queries::delete_building(&pool, &id).await;
-    Redirect::to("/admin/buildings").into_response()
+    Redirect::to("/admin").into_response()
 }
 
 // --- Apartments ---
@@ -326,26 +352,11 @@ async fn load_apartment_owned_by(
     }
 }
 
-pub async fn apartments_index(
+/// The apartments list lives on the building page now; keep old bookmarks working.
+pub async fn apartments_index_redirect(
     Path(building_id): Path<String>,
-    State(pool): State<Db>,
 ) -> impl axum::response::IntoResponse {
-    let building = match load_building(&pool, &building_id).await {
-        Ok(b) => b,
-        Err(err) => return err.into_response(),
-    };
-    match queries::list_apartments(&pool, &building_id).await {
-        Ok(apartments) => render(ApartmentsIndexTemplate {
-            title: format!("Apartments: {}", building.name),
-            building,
-            apartments,
-        }),
-        Err(_) => (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to load apartments",
-        )
-            .into_response(),
-    }
+    Redirect::permanent(&format!("/admin/buildings/{building_id}")).into_response()
 }
 
 pub async fn apartments_new(
@@ -383,6 +394,25 @@ pub async fn apartments_create(
         )
             .into_response(),
     }
+}
+
+pub async fn apartments_edit(
+    Path((building_id, apartment_id)): Path<(String, String)>,
+    State(pool): State<Db>,
+) -> impl axum::response::IntoResponse {
+    let building = match load_building(&pool, &building_id).await {
+        Ok(b) => b,
+        Err(err) => return err.into_response(),
+    };
+    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
+        Ok(a) => a,
+        Err(err) => return err.into_response(),
+    };
+    render(ApartmentsEditTemplate {
+        title: format!("Edit Apartment: {}", apartment.name),
+        building,
+        apartment,
+    })
 }
 
 pub async fn apartments_show(
@@ -450,7 +480,7 @@ pub async fn apartments_delete(
         return err.into_response();
     }
     let _ = queries::delete_apartment(&pool, &apartment_id).await;
-    Redirect::to(&format!("/admin/buildings/{building_id}/apartments")).into_response()
+    Redirect::to(&format!("/admin/buildings/{building_id}")).into_response()
 }
 
 // --- Ownerships ---
