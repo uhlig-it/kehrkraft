@@ -9,6 +9,7 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 * Inherit CI from rostfacto
   - unit tests
   - publish container
+* What's up with `tests/unit/plan_crud.rs` ?
 * Deploy to soda or neon using a separate, private project (`kehrkraft-deployment`)
 * PDF layout must use both columns equally
 * Support path variables:
