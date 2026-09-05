@@ -6,17 +6,11 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 
 # TODO
 
-* Inherit CI from rostfacto
-  - unit tests
-  - publish container
-* What's up with `tests/unit/plan_crud.rs` ?
-* Deploy to soda or neon using a separate, private project (`kehrkraft-deployment`)
 * PDF layout must use both columns equally
 * Support path variables:
   - `TYPST_BIN_PATH` (optional) - Full path to the typst executable that is to be used for generating the PDF invoice. Defaults to the first `typst` in the `$PATH`. If set and non-empty, that value is returned directly. Otherwise, "typst" is found in the system PATH.
   - `TYPST_SPOOL_DIR` (optional) - Path to an existing directory where the typst file for the PDF invoice, together with the JSON containing billing data and the Factur-X XML, will be stored. This contents of this directory are ephemeral, but they may be useful for troubleshooting PDF generation. Defaults to `$TMPDIR`.
 * Internationalization: Keep strings ready for EN/DE; "Kehrwoche" as canonical term. Collect all strings that need translation and suggest German alternatives, so that we can support both languages
-* Reorder appartments manually (per drag handle)
 * iCal feed for a plan
 * Reminders that duty is due for a tenant / owner
 * Hourly database backup to S3 with retention (port sqlite-vault to sqlite-vault-rs)
