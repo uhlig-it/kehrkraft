@@ -37,14 +37,16 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 
 # Develop
 
+The first start picks a free port and saves it to `.kehrkraft-port` in the working directory; later restarts (e.g. triggered by `cargo watch`) reuse that port. Delete the file or set `KEHRKRAFT_PORT` to pick a different port.
+
 ```command
-$ KEHRKRAFT_PORT=3000 RUST_LOG=info KEHRKRAFT_ADMIN_USER=admin KEHRKRAFT_ADMIN_PASS=secret cargo watch -x "run"
+$ RUST_LOG=info KEHRKRAFT_ADMIN_USER=admin KEHRKRAFT_ADMIN_PASS=secret cargo watch -x "run"
 ```
 
 For a demo server without authentication (red "Demo Mode" banner shown on every page), set `KEHRKRAFT_DEMO_MODE=true`; `KEHRKRAFT_ADMIN_USER`/`KEHRKRAFT_ADMIN_PASS` are then not required:
 
 ```command
-$ KEHRKRAFT_PORT=3000 RUST_LOG=info KEHRKRAFT_DEMO_MODE=true cargo run
+$ RUST_LOG=info KEHRKRAFT_DEMO_MODE=true cargo run
 ```
 
 Using docker:
@@ -124,7 +126,8 @@ Public secret URL:
 
 Environment variables (Kehrkraft's own variables are namespaced with the `KEHRKRAFT_` prefix; `RUST_LOG` is a tracing convention and stays unprefixed):
 
-- KEHRKRAFT_PORT: listening port; if unset, bind to 0 and log the assigned port
+- KEHRKRAFT_PORT: listening port; if unset, reuse the port saved in `.kehrkraft-port` (or `KEHRKRAFT_PORT_FILE`) if still free, otherwise bind to 0 and persist the assigned port
+- KEHRKRAFT_PORT_FILE: path of the file that persists the assigned dev port (default `.kehrkraft-port` in the working directory)
 - KEHRKRAFT_DATABASE_URL: e.g., sqlite:kehrkraft.db; tests use sqlite::memory:
 - KEHRKRAFT_ADMIN_USER, KEHRKRAFT_ADMIN_PASS: Basic Auth credentials for admin (not required when KEHRKRAFT_DEMO_MODE=true)
 - KEHRKRAFT_DEMO_MODE: when true (or 1/yes/on), disables admin authentication and shows a "Demo Mode" banner on every page
@@ -317,7 +320,7 @@ Repository structure (evolves with milestones):
 ## Key implementation notes
 
 - Basic Auth: Currently a hand-rolled middleware in main.rs (401 + WWW-Authenticate on failure), functionally equivalent to axum-extra's RequireAuthorizationLayer::basic(KEHRKRAFT_ADMIN_USER, KEHRKRAFT_ADMIN_PASS).
-- Port selection: If KEHRKRAFT_PORT unset, bind to 0 (OS assigns an ephemeral >1024 port); log actual port on startup.
+- Port selection: If KEHRKRAFT_PORT unset, reuse the port persisted in `.kehrkraft-port` so dev restarts (`cargo watch`) keep a stable port; fall back to binding port 0 (OS assigns an ephemeral >1024 port) and persist the assigned port. If KEHRKRAFT_PORT is set, the port file is not consulted.
 - Secret slug entropy: 128-bit random, base64url-no-pad or Crockford base32; store in buildings.secret_slug.
 - Time/calendar: Use chrono ISO weeks; be consistent with timezone (UTC or local) and document choice; prefer local for tenant dates if relevant.
 - Typst integration: Keep a reusable kehrwoche.typ; generate a minimal wrapper with serialized data to avoid code injection; per-request temp dir; cleanup.
