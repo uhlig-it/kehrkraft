@@ -13,6 +13,26 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Add pre-commit hooks
+- Add tmuxinator config
+- Rework apartment drag reorder to the htmx Sortable.js pattern
+- [**breaking**] Namespace Kehrkraft env vars with KEHRKRAFT_ prefix
+
+### Other
+
+- Render the actually running program version
+- Release v0.2.0
+
+## [0.2.0] - 2026-09-05
+
+### Added
+
+- Reorder apartments manually via drag handle
+- Use hx-confirm for delete confirmations
+- Add demo mode that disables auth and shows a banner
+
+### Changed
+
 - Rework apartment drag reorder to the htmx Sortable.js pattern
 - [**breaking**] Namespace Kehrkraft env vars with KEHRKRAFT_ prefix
 
