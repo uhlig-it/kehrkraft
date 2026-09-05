@@ -258,6 +258,73 @@ async fn create_building_apartment_owner_tenancy_flow() {
     );
 }
 
+/// Dragging the drag handle ("⋮⋮") reorders apartments: `app.js` moves the
+/// row and dispatches an `end` event, which htmx turns into a POST of the
+/// hidden `item` inputs as repeated form fields in their new DOM order.
+///
+/// This drives that POST exactly like the browser does. It guards the raw
+/// pair parsing in the handler: axum's `Form` extractor (serde_urlencoded)
+/// rejects repeated fields for a `Vec` with "invalid type: string, expected a
+/// sequence".
+#[tokio::test]
+async fn drag_reordering_persists_apartment_order() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    let building_id = create_building(&h, &client, "Haus Sonnenschein").await;
+    let a = create_apartment(&h, &client, &building_id, "Apartment 1").await;
+    let b = create_apartment(&h, &client, &building_id, "Apartment 2").await;
+    let c = create_apartment(&h, &client, &building_id, "Apartment 3").await;
+
+    // Sanity: apartments start out in creation order.
+    let initial = list_apartment_ids(&h.pool, &building_id).await;
+    assert_eq!(initial, vec![a.clone(), b.clone(), c.clone()]);
+
+    // Drag the third row to the top: one `item` field per row, in the new
+    // DOM order (this is what htmx sends when the drag ends).
+    let resp = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/apartments/reorder",
+        h.base_url
+    )))
+    .form(&[
+        ("item", c.as_str()),
+        ("item", a.as_str()),
+        ("item", b.as_str()),
+    ])
+    .send()
+    .await
+    .expect("reorder apartments");
+
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "reorder must accept repeated item fields"
+    );
+
+    // The new order is persisted.
+    let reordered = list_apartment_ids(&h.pool, &building_id).await;
+    assert_eq!(reordered, vec![c.clone(), a.clone(), b.clone()]);
+
+    // The response re-renders the table body in the new order so htmx can
+    // swap it in.
+    let body = resp.text().await.expect("reorder response body");
+    let row_pos = |id: &str| {
+        body.find(format!("/apartments/{id}").as_str())
+            .unwrap_or_else(|| panic!("reordered row {id:?} missing from response"))
+    };
+    assert!(row_pos(&c) < row_pos(&a), "tbody rows follow the new order");
+    assert!(row_pos(&a) < row_pos(&b), "tbody rows follow the new order");
+}
+
+async fn list_apartment_ids(pool: &kehrkraft::db::Db, building_id: &str) -> Vec<String> {
+    queries::list_apartments(pool, building_id)
+        .await
+        .expect("list apartments")
+        .into_iter()
+        .map(|a| a.id)
+        .collect()
+}
+
 #[tokio::test]
 async fn overlapping_tenancies_are_rejected() {
     let h = harness::start().await;

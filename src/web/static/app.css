@@ -450,3 +450,26 @@ details.disclosure form {
   color: var(--text-muted);
   padding: 2.5rem 1.25rem;
 }
+
+/* ---------- Apartment reordering ---------- */
+
+.col-drag {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.drag-handle {
+  display: inline-block;
+  cursor: grab;
+  color: var(--text-muted);
+  user-select: none;
+  touch-action: none;
+}
+
+.drag-handle:hover {
+  color: var(--text);
+}
+
+.sortable-dragging {
+  opacity: 0.5;
+}

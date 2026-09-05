@@ -139,10 +139,10 @@ pub async fn delete_building(pool: &Db, id: &str) -> Result<bool, sqlx::Error> {
 pub async fn list_apartments(pool: &Db, building_id: &str) -> Result<Vec<Apartment>, sqlx::Error> {
     sqlx::query_as::<_, Apartment>(
         r#"
-        SELECT id, building_id, name, description, created_at
+        SELECT id, building_id, name, description, position, created_at
         FROM apartments
         WHERE building_id = ?
-        ORDER BY name ASC
+        ORDER BY position ASC, name ASC, id ASC
         "#,
     )
     .bind(building_id)
@@ -153,7 +153,7 @@ pub async fn list_apartments(pool: &Db, building_id: &str) -> Result<Vec<Apartme
 pub async fn get_apartment(pool: &Db, id: &str) -> Result<Option<Apartment>, sqlx::Error> {
     sqlx::query_as::<_, Apartment>(
         r#"
-        SELECT id, building_id, name, description, created_at
+        SELECT id, building_id, name, description, position, created_at
         FROM apartments
         WHERE id = ?
         "#,
@@ -172,20 +172,21 @@ pub async fn create_apartment(
     let id = gen_token();
     sqlx::query(
         r#"
-        INSERT INTO apartments (id, building_id, name, description)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO apartments (id, building_id, name, description, position)
+        VALUES (?, ?, ?, ?, COALESCE((SELECT MAX(position) FROM apartments WHERE building_id = ?), -1) + 1)
         "#,
     )
     .bind(&id)
     .bind(building_id)
     .bind(name)
     .bind(description)
+    .bind(building_id)
     .execute(pool)
     .await?;
 
     sqlx::query_as::<_, Apartment>(
         r#"
-        SELECT id, building_id, name, description, created_at
+        SELECT id, building_id, name, description, position, created_at
         FROM apartments
         WHERE id = ?
         "#,
@@ -216,7 +217,7 @@ pub async fn update_apartment(
 
     sqlx::query_as::<_, Apartment>(
         r#"
-        SELECT id, building_id, name, description, created_at
+        SELECT id, building_id, name, description, position, created_at
         FROM apartments
         WHERE id = ?
         "#,
@@ -232,6 +233,25 @@ pub async fn delete_apartment(pool: &Db, id: &str) -> Result<bool, sqlx::Error> 
         .execute(pool)
         .await?;
     Ok(res.rows_affected() > 0)
+}
+
+/// Persist a manual display order for all apartments of a building.
+/// Positions are rewritten as 0-based indexes in the submitted order.
+pub async fn reorder_apartments(
+    pool: &Db,
+    building_id: &str,
+    ordered_ids: &[String],
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    for (index, id) in ordered_ids.iter().enumerate() {
+        sqlx::query("UPDATE apartments SET position = ? WHERE id = ? AND building_id = ?")
+            .bind(index as i64)
+            .bind(id)
+            .bind(building_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await
 }
 
 // Ownerships CRUD
@@ -632,5 +652,56 @@ mod tests {
             .await
             .expect("list apartments after delete");
         assert_eq!(list2.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn apartment_reorder_persists_position() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory");
+
+        migrate(&pool).await.expect("migrate");
+
+        let building = create_building(&pool, "Test Building", "", "Alice", "alice@example.com")
+            .await
+            .expect("create building");
+
+        let a = create_apartment(&pool, &building.id, "Erdgeschoss", "")
+            .await
+            .expect("create apartment");
+        let b = create_apartment(&pool, &building.id, "Obergeschoss", "")
+            .await
+            .expect("create apartment");
+        let c = create_apartment(&pool, &building.id, "Dachgeschoss", "")
+            .await
+            .expect("create apartment");
+
+        // New apartments are appended in creation order.
+        let initial: Vec<String> = list_apartments(&pool, &building.id)
+            .await
+            .expect("list apartments")
+            .into_iter()
+            .map(|ap| ap.id)
+            .collect();
+        assert_eq!(initial, vec![a.id.clone(), b.id.clone(), c.id.clone()]);
+
+        // Reorder to c, a, b.
+        reorder_apartments(
+            &pool,
+            &building.id,
+            &[c.id.clone(), a.id.clone(), b.id.clone()],
+        )
+        .await
+        .expect("reorder apartments");
+
+        let reordered: Vec<String> = list_apartments(&pool, &building.id)
+            .await
+            .expect("list apartments after reorder")
+            .into_iter()
+            .map(|ap| ap.id)
+            .collect();
+        assert_eq!(reordered, vec![c.id, a.id, b.id]);
     }
 }

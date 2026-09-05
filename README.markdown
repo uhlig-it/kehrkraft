@@ -64,6 +64,22 @@ This runs:
 
 Typst is required only for the two PDF tests; those skip automatically when the `typst` binary is missing. Install it via `brew install typst`, or see https://github.com/typst/typst for other platforms. The CI workflow installs Typst as well.
 
+# Demo data
+
+[`fixtures/demo.sql`](fixtures/demo.sql) seeds a demo building. The schema must exist before loading.
+
+The app creates and migrates its database (`kehrkraft.db` in the working directory by default; override with `DATABASE_URL`) at startup, so start it first:
+
+```command
+$ PORT=3000 RUST_LOG=info ADMIN_USER=admin ADMIN_PASS=secret cargo run
+```
+
+In another terminal:
+
+```command
+$ sqlite3 kehrkraft.db < fixtures/demo.sql
+```
+
 # Implementation
 
 - Admin pages use a hand-rolled stylesheet (`/static/app.css`, embedded into the binary); no CSS framework.

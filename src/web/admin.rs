@@ -3,7 +3,7 @@ use crate::db::queries;
 use crate::db::Db;
 use crate::scheduler::{self, WeekAssignment};
 use askama::Template;
-use axum::extract::{Path, State};
+use axum::extract::{Path, RawForm, State};
 use axum::response::IntoResponse as _;
 use axum::response::Redirect;
 use axum::Form;
@@ -104,6 +104,13 @@ pub struct ApartmentsShowTemplate {
     pub owner_form: Option<OwnershipForm>,
     /// Submitted values, preserved when an "Add Tenant" submission fails.
     pub tenant_form: Option<TenancyForm>,
+}
+
+#[derive(Template)]
+#[template(path = "admin/apartments/_table_body.html")]
+pub struct ApartmentsTableBodyTemplate {
+    pub building: Building,
+    pub apartments: Vec<Apartment>,
 }
 
 #[derive(Template)]
@@ -595,6 +602,82 @@ pub async fn apartments_delete(
     }
     let _ = queries::delete_apartment(&pool, &apartment_id).await;
     Redirect::to(&format!("/admin/buildings/{building_id}")).into_response()
+}
+
+/// Persist a manually chosen apartment order. Receives the apartment ids as
+/// repeated `item` form fields (in their new DOM order, sent by htmx when the
+/// drag-and-drop ends) and responds with the re-rendered table body so htmx
+/// can swap in the new order.
+///
+/// The body is parsed from the raw form pairs: axum's `Form` extractor uses
+/// `serde_urlencoded`, which cannot deserialize repeated form fields into a
+/// `Vec` and rejects the request with `invalid type: string "…", expected a
+/// sequence`.
+pub async fn apartments_reorder(
+    Path(building_id): Path<String>,
+    State(pool): State<Db>,
+    RawForm(body): RawForm,
+) -> impl axum::response::IntoResponse {
+    // Apartment ids in their new DOM order, one `item` field per row.
+    let items: Vec<String> = form_urlencoded::parse(&body)
+        .filter(|(key, _)| key == "item")
+        .map(|(_, value)| value.into_owned())
+        .collect();
+
+    // The submitted ids must be exactly this building's apartments: no
+    // additions, omissions, or duplicates.
+    let current = match queries::list_apartments(&pool, &building_id).await {
+        Ok(list) => list,
+        Err(_) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to load apartments",
+            )
+                .into_response()
+        }
+    };
+    let mut current_ids: Vec<&str> = current.iter().map(|a| a.id.as_str()).collect();
+    current_ids.sort_unstable();
+    let mut submitted: Vec<&str> = items.iter().map(String::as_str).collect();
+    submitted.sort_unstable();
+    if current_ids != submitted {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "Invalid apartment order",
+        )
+            .into_response();
+    }
+
+    if queries::reorder_apartments(&pool, &building_id, &items)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to reorder apartments",
+        )
+            .into_response();
+    }
+
+    // Re-render just the table body so htmx can swap in the new order.
+    let building = match load_building(&pool, &building_id).await {
+        Ok(b) => b,
+        Err(err) => return err.into_response(),
+    };
+    let apartments = match queries::list_apartments(&pool, &building_id).await {
+        Ok(list) => list,
+        Err(_) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to reload apartments",
+            )
+                .into_response()
+        }
+    };
+    render(ApartmentsTableBodyTemplate {
+        building,
+        apartments,
+    })
 }
 
 // --- Ownerships ---

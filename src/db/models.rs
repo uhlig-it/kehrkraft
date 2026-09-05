@@ -24,6 +24,8 @@ pub struct Apartment {
     pub building_id: String,
     pub name: String,
     pub description: String,
+    /// Manual display order within the building; 0-based, gaps allowed.
+    pub position: i64,
     pub created_at: String,
 }
 

@@ -25,24 +25,13 @@
   <table class="table">
     <thead>
       <tr>
+        <th class="col-drag"></th>
         <th>Name</th>
         <th>Description</th>
         <th class="col-actions"></th>
       </tr>
     </thead>
-    <tbody>
-    {% for a in apartments %}
-      <tr>
-        <td><a class="link-strong" href="/admin/buildings/{{ building.id }}/apartments/{{ a.id }}">{{ a.name }}</a></td>
-        <td>{{ a.description }}</td>
-        <td class="col-actions">
-          <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ a.id }}/delete" onsubmit="return confirm('Delete this apartment?');">
-            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
-          </form>
-        </td>
-      </tr>
-    {% endfor %}
-    </tbody>
+    {% include "admin/apartments/_table_body.html" %}
   </table>
   {% endif %}
 </section>

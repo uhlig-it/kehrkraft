@@ -1,0 +1,22 @@
+<tbody id="apartments-tbody"
+       hx-post="/admin/buildings/{{ building.id }}/apartments/reorder"
+       hx-trigger="end"
+       hx-target="#apartments-tbody"
+       hx-swap="outerHTML"
+       hx-on:load="initApartmentSort(this)">
+  {% for a in apartments %}
+  <tr>
+    <td class="col-drag">
+      <span class="drag-handle" draggable="true" title="Drag to reorder">⋮⋮</span>
+    </td>
+    <td><a class="link-strong" href="/admin/buildings/{{ building.id }}/apartments/{{ a.id }}">{{ a.name }}</a></td>
+    <td>{{ a.description }}</td>
+    <td class="col-actions">
+      <input type="hidden" name="item" value="{{ a.id }}" />
+      <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ a.id }}/delete" onsubmit="return confirm('Delete this apartment?');">
+        <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</tbody>
