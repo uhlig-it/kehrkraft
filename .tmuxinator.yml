@@ -1,16 +1,19 @@
 name: kehrkraft
-on_project_start: zed ~/git/github.com/uhlig.it/kehrkraft ~/git/github.com/uhlig.it/kehrkraft-deployment ~/git/github.com/uhlig.it/ansible-role-simple-systemd-service
+# All paths are relative to the directory tmuxinator was started from, so the
+# same file works from the base checkout and from any wtg workspace worktree
+# (repos live side by side under github.com/uhlig.it in both layouts).
+on_project_start: zed . ../kehrkraft-deployment ../ansible-role-simple-systemd-service
 startup_window: kehrkraft
 startup_pane: 2
 windows:
   - kehrkraft:
-      root: ~/git/github.com/uhlig.it/kehrkraft
+      root: .
       layout: main-vertical
       panes:
         - tests: cargo watch -x test
         - server: cargo watch -x run
         - shell:
   - deployment:
-      root: ~/git/github.com/uhlig.it/kehrkraft-deployment
+      root: ../kehrkraft-deployment
   - simple-systemd-service:
-      root: ~/git/github.com/uhlig.it/ansible-role-simple-systemd-service
+      root: ../ansible-role-simple-systemd-service
