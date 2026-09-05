@@ -7,15 +7,19 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 # TODO
 
 * PDF layout must use both columns equally
+* Move validation to the db layer as much as sensible, and keep it in the web layer only if it's not reasonably possible to do in the db layer.
+* Make it impossible for an apartment to have no ownership record
+* iCal feed for a plan
+* List people and their roles (admin, owner, tenant) and their objects
+* Hourly database backup to S3 with retention (port sqlite-vault to sqlite-vault-rs)
+* Internationalization: Keep strings ready for EN/DE; "Kehrwoche" as canonical term. Collect all strings that need translation and suggest German alternatives, so that we can support both languages
+* Remove `rotation_seed` if really unused
 * Support path variables:
   - `TYPST_BIN_PATH` (optional) - Full path to the typst executable that is to be used for generating the PDF invoice. Defaults to the first `typst` in the `$PATH`. If set and non-empty, that value is returned directly. Otherwise, "typst" is found in the system PATH.
   - `TYPST_SPOOL_DIR` (optional) - Path to an existing directory where the typst file for the PDF invoice, together with the JSON containing billing data and the Factur-X XML, will be stored. This contents of this directory are ephemeral, but they may be useful for troubleshooting PDF generation. Defaults to `$TMPDIR`.
-* Internationalization: Keep strings ready for EN/DE; "Kehrwoche" as canonical term. Collect all strings that need translation and suggest German alternatives, so that we can support both languages
-* iCal feed for a plan
 * Reminders that duty is due for a tenant / owner
-* Hourly database backup to S3 with retention (port sqlite-vault to sqlite-vault-rs)
-* List people and their roles (admin, owner, tenant) and their objects
 * When showing people `Bart Simpson <bart.simpson@example.com>`, omit the part in `<>`. Instead, show the email (as mailto: link) in their profile page
+* Make buildings editable
 * Switch to proper auth system
 * Read-only JSON feed for hardware integrations
 * Reminder eMails via forwardemail
