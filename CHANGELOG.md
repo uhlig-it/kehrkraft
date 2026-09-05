@@ -3,6 +3,24 @@
 All notable changes to this project will be documented in this file.
 
 <!-- git-cliff: end of header -->
+## [0.2.0] - 2026-09-05
+
+### Added
+
+- Reorder apartments manually via drag handle
+- Use hx-confirm for delete confirmations
+- Add demo mode that disables auth and shows a banner
+
+### Changed
+
+- Rework apartment drag reorder to the htmx Sortable.js pattern
+- [**breaking**] Namespace Kehrkraft env vars with KEHRKRAFT_ prefix
+
+### Other
+
+- Render the actually running program version
+- Add pre-commit hooks
+- Add tmuxinator config
 
 ## [0.1.0] - 2026-09-04
 
