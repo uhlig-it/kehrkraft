@@ -15,8 +15,10 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 * Reminders that duty is due for a tenant / owner
 * Hourly database backup to S3 with retention (port sqlite-vault to sqlite-vault-rs)
 * List people and their roles (admin, owner, tenant) and their objects
+* When showing people `Bart Simpson <bart.simpson@example.com>`, omit the part in `<>`. Instead, show the email (as mailto: link) in their profile page
 * Switch to proper auth system
 * Read-only JSON feed for hardware integrations
+* Reminder eMails via forwardemail
 
 # Domain Model
 
