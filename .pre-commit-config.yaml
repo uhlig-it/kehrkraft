@@ -2,8 +2,14 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
+      # sqlx checksums migration files at startup; any byte change to an
+      # applied migration (even a trailing newline) breaks existing databases
+      # with VersionMismatch. Keep migration files byte-stable and excluded
+      # from content-normalizing hooks.
       - id: trailing-whitespace
+        exclude: ^migrations/.*\.sql$
       - id: end-of-file-fixer
+        exclude: ^migrations/.*\.sql$
       - id: check-yaml
       - id: check-toml
       - id: check-json
