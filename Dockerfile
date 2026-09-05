@@ -34,12 +34,12 @@ FROM debian:trixie-slim
 RUN useradd -m -u 10001 appuser \
     && mkdir -p /app \
     && chown appuser:appuser /app
-# Database file (DATABASE_URL default) is created at runtime under /app
+# Database file (KEHRKRAFT_DATABASE_URL default) is created at runtime under /app
 COPY --from=builder /app/target/release/kehrkraft /usr/local/bin/kehrkraft
 COPY --from=builder /usr/local/bin/typst /usr/local/bin/typst
 WORKDIR /app
 ENV RUST_LOG=info
-ENV PORT=3000
+ENV KEHRKRAFT_PORT=3000
 USER appuser
 EXPOSE 3000
 CMD ["/usr/local/bin/kehrkraft"]

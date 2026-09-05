@@ -36,20 +36,20 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 # Develop
 
 ```command
-$ PORT=3000 RUST_LOG=info ADMIN_USER=admin ADMIN_PASS=secret cargo watch -x "run"
+$ KEHRKRAFT_PORT=3000 RUST_LOG=info KEHRKRAFT_ADMIN_USER=admin KEHRKRAFT_ADMIN_PASS=secret cargo watch -x "run"
 ```
 
-For a demo server without authentication (red "Demo Mode" banner shown on every page), set `KEHRKRAFT_DEMO_MODE=true`; `ADMIN_USER`/`ADMIN_PASS` are then not required:
+For a demo server without authentication (red "Demo Mode" banner shown on every page), set `KEHRKRAFT_DEMO_MODE=true`; `KEHRKRAFT_ADMIN_USER`/`KEHRKRAFT_ADMIN_PASS` are then not required:
 
 ```command
-$ PORT=3000 RUST_LOG=info KEHRKRAFT_DEMO_MODE=true cargo run
+$ KEHRKRAFT_PORT=3000 RUST_LOG=info KEHRKRAFT_DEMO_MODE=true cargo run
 ```
 
 Using docker:
 
 ```command
 $ docker buildx build --tag kehrkraft:latest --load .
-$ docker run --interactive --tty --rm --env PORT=3000 --env ADMIN_USER=admin --env ADMIN_PASS=secret --publish 3001:3000 kehrkraft
+$ docker run --interactive --tty --rm --env KEHRKRAFT_PORT=3000 --env KEHRKRAFT_ADMIN_USER=admin --env KEHRKRAFT_ADMIN_PASS=secret --publish 3001:3000 kehrkraft
 ```
 
 The image bundles the Typst CLI, so PDF generation works inside the container out of the box.
@@ -74,10 +74,10 @@ Typst is required only for the two PDF tests; those skip automatically when the 
 
 [`fixtures/demo.sql`](fixtures/demo.sql) seeds a demo building. The schema must exist before loading.
 
-The app creates and migrates its database (`kehrkraft.db` in the working directory by default; override with `DATABASE_URL`) at startup, so start it first:
+The app creates and migrates its database (`kehrkraft.db` in the working directory by default; override with `KEHRKRAFT_DATABASE_URL`) at startup, so start it first:
 
 ```command
-$ PORT=3000 RUST_LOG=info ADMIN_USER=admin ADMIN_PASS=secret cargo run
+$ KEHRKRAFT_PORT=3000 RUST_LOG=info KEHRKRAFT_ADMIN_USER=admin KEHRKRAFT_ADMIN_PASS=secret cargo run
 ```
 
 In another terminal:
@@ -120,11 +120,11 @@ Public secret URL:
 
 - GET /p/{secret_slug}/kehrwoche.pdf returns the current year’s plan as a downloadable PDF
 
-Environment variables:
+Environment variables (Kehrkraft's own variables are namespaced with the `KEHRKRAFT_` prefix; `RUST_LOG` is a tracing convention and stays unprefixed):
 
-- PORT: listening port; if unset, bind to 0 and log the assigned port
-- DATABASE_URL: e.g., sqlite:kehrkraft.db; tests use sqlite::memory:
-- ADMIN_USER, ADMIN_PASS: Basic Auth credentials for admin (not required when KEHRKRAFT_DEMO_MODE=true)
+- KEHRKRAFT_PORT: listening port; if unset, bind to 0 and log the assigned port
+- KEHRKRAFT_DATABASE_URL: e.g., sqlite:kehrkraft.db; tests use sqlite::memory:
+- KEHRKRAFT_ADMIN_USER, KEHRKRAFT_ADMIN_PASS: Basic Auth credentials for admin (not required when KEHRKRAFT_DEMO_MODE=true)
 - KEHRKRAFT_DEMO_MODE: when true (or 1/yes/on), disables admin authentication and shows a "Demo Mode" banner on every page
 - RUST_LOG: optional logging level
 
@@ -314,8 +314,8 @@ Repository structure (evolves with milestones):
 
 ## Key implementation notes
 
-- Basic Auth: Currently a hand-rolled middleware in main.rs (401 + WWW-Authenticate on failure), functionally equivalent to axum-extra's RequireAuthorizationLayer::basic(ADMIN_USER, ADMIN_PASS).
-- Port selection: If PORT unset, bind to 0 (OS assigns an ephemeral >1024 port); log actual port on startup.
+- Basic Auth: Currently a hand-rolled middleware in main.rs (401 + WWW-Authenticate on failure), functionally equivalent to axum-extra's RequireAuthorizationLayer::basic(KEHRKRAFT_ADMIN_USER, KEHRKRAFT_ADMIN_PASS).
+- Port selection: If KEHRKRAFT_PORT unset, bind to 0 (OS assigns an ephemeral >1024 port); log actual port on startup.
 - Secret slug entropy: 128-bit random, base64url-no-pad or Crockford base32; store in buildings.secret_slug.
 - Time/calendar: Use chrono ISO weeks; be consistent with timezone (UTC or local) and document choice; prefer local for tenant dates if relevant.
 - Typst integration: Keep a reusable kehrwoche.typ; generate a minimal wrapper with serialized data to avoid code injection; per-request temp dir; cleanup.

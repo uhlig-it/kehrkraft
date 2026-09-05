@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     } else {
         let (admin_user, admin_pass) = config::admin_credentials_from_env()
-            .map_err(|_| "ADMIN_USER and ADMIN_PASS must be set")?;
+            .map_err(|_| "KEHRKRAFT_ADMIN_USER and KEHRKRAFT_ADMIN_PASS must be set")?;
         Some((admin_user, admin_pass))
     };
     let app = app::build_router(pool, admin_credentials, demo_mode);

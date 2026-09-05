@@ -7,10 +7,11 @@ pub mod models;
 pub mod queries;
 
 /// Create a SQLite connection pool.
-/// Defaults to sqlite:kehrkraft.db when DATABASE_URL is unset.
+/// Defaults to sqlite:kehrkraft.db when KEHRKRAFT_DATABASE_URL is unset.
 /// For sqlite::memory:, restrict to a single connection so the DB persists.
 pub async fn connect_pool() -> Result<SqlitePool, sqlx::Error> {
-    let mut url = env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:kehrkraft.db".to_string());
+    let mut url =
+        env::var("KEHRKRAFT_DATABASE_URL").unwrap_or_else(|_| "sqlite:kehrkraft.db".to_string());
 
     let mut opts = SqlitePoolOptions::new();
     if url.starts_with("sqlite::memory:") {
