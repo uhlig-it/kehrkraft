@@ -22,8 +22,10 @@ INSERT INTO building_administrators (id, building_id, name, email)
 VALUES ('admin-bart', 'building-treehouse', 'Bart Simpson', 'bart.simpson@example.com');
 
 -- Apartments in their manual order (position 1-4: B, G, F, R), each with an
--- open-ended ownership starting 2026-01-01. The roof floor is rented to Bart
--- Simpson, so the scheduler delegates roof duty to him.
+-- open-ended ownership starting 2026-01-01. The cleaning rotation follows the
+-- order the apartments were created (all inserted in one statement, so the
+-- deterministic tie-break is the id): B, F, G, R. The roof floor is rented to
+-- Bart Simpson, so the scheduler delegates roof duty to him.
 INSERT INTO apartments (id, building_id, name, description, position)
 VALUES
     ('apartment-basement', 'building-treehouse', 'B', 'Basement',     4),

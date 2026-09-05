@@ -741,18 +741,16 @@ pub async fn ownerships_create(
     let start = NaiveDate::parse_from_str(&form.start_date, "%Y-%m-%d").expect("validated date");
     let end = end_opt.and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
 
-    // Enforce: at most one active ownership per apartment at any point in time
+    // Ownership periods must tile the apartment's timeline: no overlaps, no
+    // gaps, so the apartment never has an unassigned week.
     match queries::list_ownerships(&pool, &apartment_id).await {
         Ok(existing) => {
-            if existing
-                .iter()
-                .any(|o| overlaps_ownership(o, start, end, None))
-            {
+            if let Some(reason) = ownership_chain_violation(&existing, None, start, end) {
                 return render_apartment_show_error(
                     &pool,
                     &building_id,
                     &apartment_id,
-                    "Ownership overlaps an existing ownership of this apartment".to_string(),
+                    reason,
                     Some(form),
                     None,
                 )
@@ -884,19 +882,19 @@ pub async fn ownerships_update(
     let start = NaiveDate::parse_from_str(&form.start_date, "%Y-%m-%d").expect("validated date");
     let end = end_opt.and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
 
-    // Enforce: at most one active ownership per apartment at any point in time
+    // Ownership periods must tile the apartment's timeline: no overlaps, no
+    // gaps, so the apartment never has an unassigned week.
     match queries::list_ownerships(&pool, &apartment_id).await {
         Ok(existing) => {
-            if existing
-                .iter()
-                .any(|o| overlaps_ownership(o, start, end, Some(&ownership_id)))
+            if let Some(reason) =
+                ownership_chain_violation(&existing, Some(&ownership_id), start, end)
             {
                 return render_ownership_edit_error(
                     &pool,
                     &building_id,
                     &apartment,
                     &ownership,
-                    "Ownership overlaps an existing ownership of this apartment".to_string(),
+                    reason,
                     form,
                 )
                 .await;
@@ -945,6 +943,43 @@ pub async fn ownerships_delete(
         Ok(Some(existing)) => {
             if existing.apartment_id != apartment_id {
                 return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response();
+            }
+            // Deleting a period between two others would open a hole in the
+            // ownership chain and leave weeks without an owner; only the first
+            // or the last period of the chain may be deleted.
+            match queries::list_ownerships(&pool, &apartment_id).await {
+                Ok(all) => {
+                    let own_start = NaiveDate::parse_from_str(&existing.start_date, "%Y-%m-%d")
+                        .expect("validated start_date");
+                    let neighbor_starts: Vec<NaiveDate> = all
+                        .iter()
+                        .filter(|o| o.id != ownership_id)
+                        .filter_map(|o| NaiveDate::parse_from_str(&o.start_date, "%Y-%m-%d").ok())
+                        .collect();
+                    let is_first = neighbor_starts.iter().all(|s| *s > own_start);
+                    let is_last = neighbor_starts.iter().all(|s| *s < own_start);
+                    if !is_first && !is_last {
+                        return render_apartment_show_error(
+                            &pool,
+                            &building_id,
+                            &apartment_id,
+                            "This ownership sits between two other ownerships, so deleting it \
+                             would leave weeks without an owner. Move the next ownership earlier \
+                             or the previous one later instead."
+                                .to_string(),
+                            None,
+                            None,
+                        )
+                        .await;
+                    }
+                }
+                Err(_) => {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "Failed to load ownerships",
+                    )
+                        .into_response()
+                }
             }
         }
         _ => return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
@@ -1136,6 +1171,81 @@ fn overlaps_ownership(
     record_overlaps(&o.start_date, o.end_date.as_deref(), start, end)
 }
 
+/// Ownership periods of an apartment must tile its timeline seamlessly: every
+/// period starts on the day after the previous one ends (and, except for the
+/// last, ends on the day before the next one starts). That guarantees the
+/// apartment always has exactly one covering owner and the schedule never has
+/// an unassigned week between owners. Returns a human-readable reason when
+/// inserting/replacing the period [start, end] (`exclude_id` skips the record
+/// being updated) would break the chain.
+fn ownership_chain_violation(
+    existing: &[Ownership],
+    exclude_id: Option<&str>,
+    start: NaiveDate,
+    end: Option<NaiveDate>,
+) -> Option<String> {
+    let others: Vec<&Ownership> = existing
+        .iter()
+        .filter(|o| exclude_id != Some(o.id.as_str()))
+        .collect();
+
+    if others
+        .iter()
+        .any(|o| overlaps_ownership(o, start, end, None))
+    {
+        return Some("Ownership overlaps an existing ownership of this apartment".to_string());
+    }
+
+    // Neighbors as parsed (start, end) pairs; dates are validated on input.
+    let neighbors: Vec<(NaiveDate, Option<NaiveDate>)> = others
+        .iter()
+        .filter_map(|o| {
+            let s = NaiveDate::parse_from_str(&o.start_date, "%Y-%m-%d").ok()?;
+            let e = o
+                .end_date
+                .as_deref()
+                .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+            Some((s, e))
+        })
+        .collect();
+
+    // The period must start on the day after the previous one ends.
+    let prev_end = neighbors
+        .iter()
+        .filter(|(_, e)| e.is_some_and(|e| e < start))
+        .map(|(_, e)| e.expect("filtered"))
+        .max();
+    if let Some(prev_end) = prev_end {
+        let expected = prev_end + chrono::Duration::days(1);
+        if start != expected {
+            return Some(format!(
+                "Ownership must start on the day after the previous ownership ends ({expected}); \
+                 this would leave {} days without an owner",
+                start.signed_duration_since(prev_end).num_days() - 1
+            ));
+        }
+    }
+
+    // ...and end on the day before the next one starts.
+    let next_start = neighbors
+        .iter()
+        .filter(|(s, _)| end.is_some_and(|e| *s > e))
+        .map(|(s, _)| *s)
+        .min();
+    if let (Some(next_start), Some(end)) = (next_start, end) {
+        let expected = next_start - chrono::Duration::days(1);
+        if end != expected {
+            return Some(format!(
+                "Ownership must end on the day before the next ownership starts ({expected}); \
+                 this would leave {} days without an owner",
+                next_start.signed_duration_since(end).num_days() - 1
+            ));
+        }
+    }
+
+    None
+}
+
 /// Re-render the tenancy edit page with an inline error, preserving the
 /// submitted form values.
 async fn render_tenancy_edit_error(
@@ -1264,7 +1374,10 @@ pub async fn tenancies_delete(
 
 #[cfg(test)]
 mod tests {
-    use super::{overlaps_ownership, overlaps_tenancy, periods_overlap, Ownership, Tenancy};
+    use super::{
+        overlaps_ownership, overlaps_tenancy, ownership_chain_violation, periods_overlap,
+        Ownership, Tenancy,
+    };
     use chrono::NaiveDate;
 
     fn d(s: &str) -> NaiveDate {
@@ -1458,5 +1571,74 @@ mod tests {
             Some(d("2024-12-31")),
             Some("other")
         ));
+    }
+
+    #[test]
+    fn ownership_chain_violation_detection() {
+        // Chain: r1 covers Jan 1 - Jun 30, r2 is open-ended from July 1.
+        let records = [
+            o("1", "2026-01-01", Some("2026-06-30")),
+            o("2", "2026-07-01", None),
+        ];
+        // A record with the same span as r2 overlaps it and is rejected.
+        assert!(ownership_chain_violation(&records, None, d("2026-07-01"), None).is_some());
+        // A gap after the previous period is rejected.
+        assert!(ownership_chain_violation(&records, None, d("2026-07-03"), None).is_some());
+        // A tiled period before the chain start is fine (becomes the first).
+        assert!(
+            ownership_chain_violation(&records, None, d("2025-01-01"), Some(d("2025-12-31")))
+                .is_none()
+        );
+        // An open-ended ownership cannot be followed by another one (overlap).
+        assert!(ownership_chain_violation(&records, None, d("2026-08-01"), None).is_some());
+        // Updating record 2 without breaking the chain is fine.
+        assert!(ownership_chain_violation(&records, Some("2"), d("2026-07-01"), None).is_none());
+        // Updating record 2 into a gap is rejected.
+        assert!(ownership_chain_violation(&records, Some("2"), d("2026-07-02"), None).is_some());
+
+        // With only r1, an adjacent continuation is accepted and an overlap/gap
+        // inside the period is not.
+        let single = [o("1", "2026-01-01", Some("2026-06-30"))];
+        assert!(ownership_chain_violation(&single, None, d("2026-07-01"), None).is_none());
+        assert!(
+            ownership_chain_violation(&single, None, d("2026-03-01"), Some(d("2026-04-30")))
+                .is_some()
+        );
+
+        // With a successor, the new period must end right before it starts.
+        let records2 = [
+            o("1", "2026-01-01", Some("2026-06-30")),
+            o("2", "2026-07-01", Some("2026-08-31")),
+            o("3", "2026-09-01", None),
+        ];
+        assert!(
+            ownership_chain_violation(&records2, None, d("2025-05-01"), Some(d("2025-12-31")))
+                .is_none()
+        );
+        // A first period ending before its successor leaves a gap.
+        assert!(
+            ownership_chain_violation(&records2, None, d("2025-05-01"), Some(d("2025-05-31")))
+                .is_some()
+        );
+        // A period overlapping a neighbor is rejected.
+        assert!(ownership_chain_violation(&records2, None, d("2026-08-15"), None).is_some());
+
+        // A hole in the middle is exactly where a tiled new period fits.
+        let records3 = [
+            o("1", "2026-01-01", Some("2026-03-31")),
+            o("2", "2026-09-01", None),
+        ];
+        assert!(
+            ownership_chain_violation(&records3, None, d("2026-04-01"), Some(d("2026-08-31")))
+                .is_none()
+        );
+        assert!(
+            ownership_chain_violation(&records3, None, d("2026-04-02"), Some(d("2026-08-31")))
+                .is_some()
+        );
+        assert!(
+            ownership_chain_violation(&records3, None, d("2026-04-01"), Some(d("2026-08-30")))
+                .is_some()
+        );
     }
 }

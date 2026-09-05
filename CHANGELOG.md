@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 
 <!-- git-cliff: end of header -->
+## [Unreleased]
+
+### Changed
+
+- [**breaking**] The rotation is now anchored to apartments (in the order they were created) instead of ownership records, with a continuous counter across years, so that owner or tenant changes mid-year no longer shift the duty weeks of other apartments, and the +1 imbalance of years with 53 ISO weeks rotates between the apartments instead of always hitting the same ones.
+- [**breaking**] Ownership periods of an apartment must now tile its timeline seamlessly (the next ownership starts on the day after the previous one ends; enforced on create/update/delete). Transition weeks between two ownerships are assigned to the owner covering most of the week, so there are no more unassigned weeks.
+- The apartment order in the admin list is now explicitly display-only (note added); it never influences scheduling.
+
 ## [0.2.0] - 2026-09-05
 
 ### Added

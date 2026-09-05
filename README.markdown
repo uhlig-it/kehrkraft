@@ -34,10 +34,12 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 - An apartment may be rented out to a tenant. For each tenant, we store a name and email address.
 - Tenancy start date, and an optional end date.
 - At any point in time, not more than one tenancy may be active for an apartment. It might happen that a tenancy ended and no new one exists (yet).
+- At any point in time, not more than one ownership may be active for an apartment, and the ownership periods of an apartment tile its timeline seamlessly: the next ownership starts on the day after the previous one ends (enforced on create/update/delete). This guarantees that an apartment always has an owner and the schedule never has an unassigned week between two owners.
 - A plan represents the responsibility for stairwell cleaning for a building during a year. The assignment is scheduled per the following rules:
-  1. Responsibility is assigned to the owners of the apartments round-robin.
+  1. Responsibility is assigned round-robin over the apartments, in the order the apartments were created. The rotation counter continues across years, so the imbalance of years with 53 ISO weeks (one apartment serves one week more) rotates between the apartments over time instead of always hitting the same ones.
   1. Responsibility lasts one week each. It starts Monday 00:00 and ends Sunday 23:59.
-  1. If a tenancy is active for a week, the responsibility is delegated to the tenant.
+  1. A week always has an assignee as long as at least one apartment has an owner: the week belongs to the owner whose period covers most of its days, so a transition week between two owners is resolved rather than left unassigned.
+  1. If a tenancy covers a whole week, the responsibility is delegated to the tenant; otherwise the owner serves.
 
 # Develop
 
