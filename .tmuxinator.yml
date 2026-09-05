@@ -1,0 +1,16 @@
+name: kehrkraft
+on_project_start: zed ~/git/github.com/uhlig.it/kehrkraft ~/git/github.com/uhlig.it/kehrkraft-deployment ~/git/github.com/uhlig.it/ansible-role-simple-systemd-service
+startup_window: kehrkraft
+startup_pane: 2
+windows:
+  - kehrkraft:
+      root: ~/git/github.com/uhlig.it/kehrkraft
+      layout: main-vertical
+      panes:
+        - tests: cargo watch -x test
+        - server: cargo watch -x run
+        - shell:
+  - deployment:
+      root: ~/git/github.com/uhlig.it/kehrkraft-deployment
+  - simple-systemd-service:
+      root: ~/git/github.com/uhlig.it/ansible-role-simple-systemd-service
