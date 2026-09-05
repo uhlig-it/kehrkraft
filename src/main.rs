@@ -41,10 +41,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = db::connect_pool().await?;
     db::migrate(&pool).await?;
 
-    // Admin: Basic Auth from env, required
-    let (admin_user, admin_pass) = config::admin_credentials_from_env()
-        .map_err(|_| "ADMIN_USER and ADMIN_PASS must be set")?;
-    let app = app::build_router(pool, admin_user, admin_pass);
+    // Admin area authentication: required unless demo mode is on.
+    let demo_mode = config::demo_mode_from_env();
+    let admin_credentials = if demo_mode {
+        tracing::warn!("KEHRKRAFT_DEMO_MODE is set: authentication disabled, demo banner shown");
+        None
+    } else {
+        let (admin_user, admin_pass) = config::admin_credentials_from_env()
+            .map_err(|_| "ADMIN_USER and ADMIN_PASS must be set")?;
+        Some((admin_user, admin_pass))
+    };
+    let app = app::build_router(pool, admin_credentials, demo_mode);
 
     let port_opt = config::port_from_env();
     let bind_addr = SocketAddr::from(([0, 0, 0, 0], port_opt.unwrap_or(0)));

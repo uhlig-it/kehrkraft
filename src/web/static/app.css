@@ -109,6 +109,19 @@ a {
   color: var(--accent);
 }
 
+/* ---------- Demo mode banner ---------- */
+
+.demo-banner {
+  background: var(--danger);
+  color: #fff;
+  text-align: center;
+  font-weight: 600;
+  font-size: 0.85rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.45rem 1rem;
+}
+
 /* ---------- Layout ---------- */
 
 .container {

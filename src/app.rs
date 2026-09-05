@@ -174,11 +174,81 @@ async fn rate_limit(req: Request<Body>, next: Next) -> Response {
     next.run(req).await
 }
 
+/// Markup injected at the top of every full HTML page in demo mode.
+const DEMO_BANNER_HTML: &[u8] = b"<div class=\"demo-banner\">Demo Mode</div>";
+
+/// Inserts [DEMO_BANNER_HTML] right after the opening `<body>` tag, or returns
+/// the body unchanged if no `<body>` tag is present.
+fn insert_demo_banner(body: &[u8]) -> Vec<u8> {
+    let body_tag = b"<body";
+    let mut i = 0;
+    while i + body_tag.len() <= body.len() {
+        if &body[i..i + body_tag.len()] == body_tag {
+            if let Some(rel) = body[i..].iter().position(|&b| b == b'>') {
+                let insert_at = i + rel + 1;
+                let mut out = Vec::with_capacity(body.len() + DEMO_BANNER_HTML.len());
+                out.extend_from_slice(&body[..insert_at]);
+                out.extend_from_slice(DEMO_BANNER_HTML);
+                out.extend_from_slice(&body[insert_at..]);
+                return out;
+            }
+            break;
+        }
+        i += 1;
+    }
+    body.to_vec()
+}
+
+/// Demo-mode middleware: adds the red "Demo Mode" banner to full HTML pages.
+///
+/// All admin pages extend `base.html`, so a full page always contains a
+/// `<body>` tag, while htmx partials (table bodies, form fragments) do not and
+/// pass through untouched. Runs at route level, i.e. inside the compression
+/// layer, so the body can be rewritten before compression.
+async fn demo_banner(req: Request<Body>, next: Next) -> Response {
+    let res = next.run(req).await;
+    let is_html = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.starts_with("text/html"));
+    if !is_html {
+        return res;
+    }
+
+    let (mut parts, body) = res.into_parts();
+    // Bodies are small HTML pages; a failure to buffer within 1 MiB means the
+    // response cannot be rewritten, so surface a server error rather than
+    // sending an unmodified (banner-less) page.
+    let Ok(bytes) = axum::body::to_bytes(body, 1_000_000).await else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to buffer response",
+        )
+            .into_response();
+    };
+    let out = insert_demo_banner(&bytes);
+    if out.len() == bytes.len() {
+        return Response::from_parts(parts, Body::from(out));
+    }
+    // The length changed, so a stale Content-Length would be wrong.
+    parts.headers.remove(header::CONTENT_LENGTH);
+    Response::from_parts(parts, Body::from(out))
+}
+
 /// The full application router.
+///
+/// `admin_credentials` enables Basic Auth on the admin area; `None` disables
+/// it (demo mode). `demo_mode` additionally injects a "Demo Mode" banner into
+/// every full HTML page.
 ///
 /// Requires serving with `into_make_service_with_connect_info::<SocketAddr>()`
 /// so the rate limiter can see client addresses.
-pub fn build_router(pool: Db, admin_user: String, admin_pass: String) -> Router {
+pub fn build_router(
+    pool: Db,
+    admin_credentials: Option<(String, String)>,
+    demo_mode: bool,
+) -> Router {
     let admin_router = Router::new()
         .route("/", get(admin::buildings_index))
         .route("/admin", get(admin::buildings_index))
@@ -255,15 +325,22 @@ pub fn build_router(pool: Db, admin_user: String, admin_pass: String) -> Router 
         .route(
             "/admin/buildings/{id}/apartments/{apartment_id}/tenancies/{tenancy_id}/delete",
             axum::routing::post(admin::tenancies_delete),
-        )
-        .route_layer(middleware::from_fn_with_state(
-            (admin_user, admin_pass),
-            require_basic_auth,
-        ));
+        );
 
     let public_router = Router::new()
         .route("/p/{secret_slug}/kehrwoche.pdf", get(pdf::public_pdf))
         .route_layer(middleware::from_fn(rate_limit));
+
+    let admin_router = if demo_mode {
+        admin_router.route_layer(middleware::from_fn(demo_banner))
+    } else {
+        let (admin_user, admin_pass) =
+            admin_credentials.expect("admin credentials required when demo mode is disabled");
+        admin_router.route_layer(middleware::from_fn_with_state(
+            (admin_user, admin_pass),
+            require_basic_auth,
+        ))
+    };
 
     Router::new()
         .route("/healthz", get(healthz))

@@ -24,3 +24,15 @@ pub fn admin_credentials_from_env() -> Result<(String, String), std::env::VarErr
     let pass = env::var("ADMIN_PASS")?;
     Ok((user, pass))
 }
+
+/// Whether to run in demo mode (KEHRKRAFT_DEMO_MODE=true).
+/// Demo mode disables authentication and shows a "Demo Mode" banner.
+pub fn demo_mode_from_env() -> bool {
+    match env::var("KEHRKRAFT_DEMO_MODE") {
+        Ok(val) => {
+            let normalized = val.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "true" | "1" | "yes" | "on")
+        }
+        Err(_) => false,
+    }
+}

@@ -39,6 +39,12 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 $ PORT=3000 RUST_LOG=info ADMIN_USER=admin ADMIN_PASS=secret cargo watch -x "run"
 ```
 
+For a demo server without authentication (red "Demo Mode" banner shown on every page), set `KEHRKRAFT_DEMO_MODE=true`; `ADMIN_USER`/`ADMIN_PASS` are then not required:
+
+```command
+$ PORT=3000 RUST_LOG=info KEHRKRAFT_DEMO_MODE=true cargo run
+```
+
 Using docker:
 
 ```command
@@ -118,7 +124,8 @@ Environment variables:
 
 - PORT: listening port; if unset, bind to 0 and log the assigned port
 - DATABASE_URL: e.g., sqlite:kehrkraft.db; tests use sqlite::memory:
-- ADMIN_USER, ADMIN_PASS: Basic Auth credentials for admin
+- ADMIN_USER, ADMIN_PASS: Basic Auth credentials for admin (not required when KEHRKRAFT_DEMO_MODE=true)
+- KEHRKRAFT_DEMO_MODE: when true (or 1/yes/on), disables admin authentication and shows a "Demo Mode" banner on every page
 - RUST_LOG: optional logging level
 
 Repository structure (evolves with milestones):

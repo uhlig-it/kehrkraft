@@ -802,3 +802,77 @@ async fn deletes_redirect_htmx_requests_via_hx_redirect_header() {
 }
 
 type Regex = regex::Regex;
+
+#[tokio::test]
+async fn demo_mode_disables_auth_and_shows_banner() {
+    let h = harness::start_demo().await;
+    // No redirects: form posts return 303 + Location that we assert on.
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("build client");
+
+    // No credentials required in demo mode: the admin area is open.
+    let resp = client
+        .get(format!("{}/admin", h.base_url))
+        .send()
+        .await
+        .expect("unauthenticated request");
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "/admin should be open in demo mode"
+    );
+    let body = resp.text().await.expect("admin body");
+    assert!(
+        body.contains("Buildings"),
+        "expected buildings home page, got {body:?}"
+    );
+
+    // The red demo banner is present on full pages...
+    assert!(
+        body.contains("Demo Mode"),
+        "expected demo banner, got {body:?}"
+    );
+    assert!(
+        body.contains(r#"class="demo-banner""#),
+        "banner should carry the demo-banner class"
+    );
+    assert!(
+        body.contains(r#"<body><div class="demo-banner">Demo Mode</div>"#),
+        "banner should be the first element inside <body>"
+    );
+
+    // ...including on a building detail page.
+    let created = client
+        .post(format!("{}/admin/buildings", h.base_url))
+        .form(&[
+            ("name", "Demo Haus"),
+            ("description", ""),
+            ("admin_name", "Alice"),
+            ("admin_email", "alice@example.com"),
+        ])
+        .send()
+        .await
+        .expect("create building");
+    let location = created
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .expect("Location header")
+        .to_string();
+    let detail = client
+        .get(format!("{}{}", h.base_url, location))
+        .send()
+        .await
+        .expect("fetch building detail");
+    assert_eq!(detail.status(), StatusCode::OK);
+    assert!(
+        detail
+            .text()
+            .await
+            .expect("detail body")
+            .contains("Demo Mode"),
+        "demo banner should appear on the building detail page"
+    );
+}

@@ -29,7 +29,11 @@ async fn start_app() -> (String, sqlx::SqlitePool) {
         .expect("connect in-memory db");
     migrate(&pool).await.expect("migrate");
 
-    let app = app::build_router(pool.clone(), "admin".into(), "secret".into());
+    let app = app::build_router(
+        pool.clone(),
+        Some(("admin".to_string(), "secret".to_string())),
+        false,
+    );
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
 
