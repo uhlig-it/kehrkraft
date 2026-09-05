@@ -470,6 +470,42 @@ details.disclosure form {
   color: var(--text);
 }
 
-.sortable-dragging {
-  opacity: 0.5;
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+/* While dragging, Sortable.js keeps the dragged row in the list as the drop
+   placeholder (`.sortable-ghost`) and shifts the other rows around it; the
+   browser shows a ghost of the row under the pointer. */
+.table tbody tr.sortable-ghost,
+.table tbody tr.sortable-ghost:hover {
+  background: var(--accent-soft);
+  opacity: 0.4;
+}
+
+/* "Saving order…" pill shown while the reorder POST is in flight.
+   htmx toggles the `htmx-request` class on the element targeted by
+   `hx-indicator`; these are the standard rules from the htmx docs. */
+.htmx-indicator {
+  display: none;
+}
+
+.htmx-request .htmx-indicator {
+  display: inline;
+}
+
+.htmx-request.htmx-indicator {
+  display: inline;
+}
+
+.card-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.reorder-indicator {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--accent);
 }

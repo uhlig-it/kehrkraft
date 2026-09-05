@@ -25,7 +25,7 @@ use crate::web::{admin, pdf};
 const KEHRKRAFT_SVG: &[u8] = include_bytes!("../kehrkraft.svg");
 const APP_CSS: &[u8] = include_bytes!("web/static/app.css");
 const HTMX_JS: &[u8] = include_bytes!("web/static/htmx.min.js");
-const APP_JS: &[u8] = include_bytes!("web/static/app.js");
+const SORTABLE_JS: &[u8] = include_bytes!("web/static/sortable.min.js");
 
 async fn healthz() -> &'static str {
     "ok"
@@ -58,7 +58,7 @@ async fn htmx_js() -> impl IntoResponse {
     )
 }
 
-async fn app_js() -> impl IntoResponse {
+async fn sortable_js() -> impl IntoResponse {
     (
         [
             (
@@ -67,7 +67,7 @@ async fn app_js() -> impl IntoResponse {
             ),
             (header::CACHE_CONTROL, "public, max-age=3600"),
         ],
-        APP_JS,
+        SORTABLE_JS,
     )
 }
 
@@ -272,7 +272,7 @@ pub fn build_router(pool: Db, admin_user: String, admin_pass: String) -> Router 
         .route("/kehrkraft.svg", get(logo_svg))
         .route("/static/app.css", get(app_css))
         .route("/static/htmx.min.js", get(htmx_js))
-        .route("/static/app.js", get(app_js))
+        .route("/static/sortable.min.js", get(sortable_js))
         .layer(middleware::from_fn(security_headers))
         .layer(tower_http::limit::RequestBodyLimitLayer::new(1_000_000))
         .layer(tower_http::compression::CompressionLayer::new())

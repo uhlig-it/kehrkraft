@@ -17,12 +17,15 @@
 <section class="card">
   <div class="card-header">
     <h2>Apartments</h2>
-    <a class="btn btn-primary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/new">Add Apartment</a>
+    <div class="card-header-actions">
+      <span id="apartment-sort-indicator" class="htmx-indicator reorder-indicator">Saving order&hellip;</span>
+      <a class="btn btn-primary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/new">Add Apartment</a>
+    </div>
   </div>
   {% if apartments.len() == 0 %}
   <p class="muted">No apartments yet.</p>
   {% else %}
-  <table class="table">
+  <table class="table sortable">
     <thead>
       <tr>
         <th class="col-drag"></th>

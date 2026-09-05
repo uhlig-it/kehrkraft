@@ -258,9 +258,10 @@ async fn create_building_apartment_owner_tenancy_flow() {
     );
 }
 
-/// Dragging the drag handle ("⋮⋮") reorders apartments: `app.js` moves the
-/// row and dispatches an `end` event, which htmx turns into a POST of the
-/// hidden `item` inputs as repeated form fields in their new DOM order.
+/// Dragging the drag handle ("⋮⋮") reorders apartments: Sortable.js moves the
+/// row and dispatches an `end` event (htmx pattern "drag-to-reorder"), which
+/// htmx turns into a POST of the hidden `item` inputs as repeated form fields
+/// in their new DOM order.
 ///
 /// This drives that POST exactly like the browser does. It guards the raw
 /// pair parsing in the handler: axum's `Form` extractor (serde_urlencoded)
