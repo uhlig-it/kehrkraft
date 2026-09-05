@@ -41,7 +41,9 @@
         <td>{% if o.end_date.is_some() %}{{ o.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
         <td class="col-actions">
           <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ o.id }}/edit">Edit</a>
-          <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ o.id }}/delete">
+          <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ o.id }}/delete"
+                hx-post="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ o.id }}/delete"
+                hx-confirm="Delete this ownership?">
             <button type="submit" class="btn btn-danger btn-sm">Delete</button>
           </form>
         </td>
@@ -103,7 +105,9 @@
         <td>{% if t.end_date.is_some() %}{{ t.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
         <td class="col-actions">
           <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ t.id }}/edit">Edit</a>
-          <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ t.id }}/delete">
+          <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ t.id }}/delete"
+                hx-post="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ t.id }}/delete"
+                hx-confirm="Delete this tenancy?">
             <button type="submit" class="btn btn-danger btn-sm">Delete</button>
           </form>
         </td>

@@ -29,7 +29,9 @@
         <td><a class="link-strong" href="/admin/buildings/{{ b.id }}">{{ b.name }}</a></td>
         <td><a href="/p/{{ b.secret_slug }}/kehrwoche.pdf"><code class="code">/p/{{ b.secret_slug }}/kehrwoche.pdf</code></a></td>
         <td class="col-actions">
-          <form class="inline" method="post" action="/admin/buildings/{{ b.id }}/delete" onsubmit="return confirm('Delete this building and all its apartments?');">
+          <form class="inline" method="post" action="/admin/buildings/{{ b.id }}/delete"
+                hx-post="/admin/buildings/{{ b.id }}/delete"
+                hx-confirm="Delete this building and all its apartments?">
             <button type="submit" class="btn btn-danger btn-sm">Delete</button>
           </form>
         </td>

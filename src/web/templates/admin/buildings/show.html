@@ -97,7 +97,9 @@
 
 <section class="card danger-zone">
   <h2>Danger zone</h2>
-  <form method="post" action="/admin/buildings/{{ building.id }}/delete" onsubmit="return confirm('Delete this building and all its apartments?');">
+  <form method="post" action="/admin/buildings/{{ building.id }}/delete"
+        hx-post="/admin/buildings/{{ building.id }}/delete"
+        hx-confirm="Delete this building and all its apartments?">
     <button type="submit" class="btn btn-danger">Delete Building</button>
   </form>
 </section>

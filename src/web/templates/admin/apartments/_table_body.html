@@ -20,7 +20,9 @@
     <td>{{ a.description }}</td>
     <td class="col-actions">
       <input type="hidden" name="item" value="{{ a.id }}" />
-      <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ a.id }}/delete" onsubmit="return confirm('Delete this apartment?');">
+      <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ a.id }}/delete"
+            hx-post="/admin/buildings/{{ building.id }}/apartments/{{ a.id }}/delete"
+            hx-confirm="Delete this apartment?">
         <button type="submit" class="btn btn-danger btn-sm">Delete</button>
       </form>
     </td>

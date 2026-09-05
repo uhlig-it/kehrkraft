@@ -4,6 +4,7 @@ use crate::db::Db;
 use crate::scheduler::{self, WeekAssignment};
 use askama::Template;
 use axum::extract::{Path, RawForm, State};
+use axum::http::{HeaderMap, HeaderName, HeaderValue};
 use axum::response::IntoResponse as _;
 use axum::response::Redirect;
 use axum::Form;
@@ -29,6 +30,26 @@ fn render(t: impl Template) -> axum::response::Response {
 /// inline on the page whose form produced it.
 fn render_bad_request(t: impl Template) -> axum::response::Response {
     (axum::http::StatusCode::BAD_REQUEST, render(t)).into_response()
+}
+
+/// Redirect after a POST. htmx requests (identified by the `HX-Request`
+/// header) get an `HX-Redirect` response header so htmx performs a full-page
+/// navigation instead of swapping the response body into the DOM; plain form
+/// posts keep the classic 303 redirect.
+fn redirect_after_post(headers: &HeaderMap, destination: &str) -> axum::response::Response {
+    if headers.contains_key("hx-request") {
+        (
+            axum::http::StatusCode::OK,
+            [(
+                HeaderName::from_static("hx-redirect"),
+                HeaderValue::from_str(destination)
+                    .expect("redirect destination is a valid header value"),
+            )],
+        )
+            .into_response()
+    } else {
+        Redirect::to(destination).into_response()
+    }
 }
 
 #[derive(Template)]
@@ -351,9 +372,10 @@ pub async fn buildings_schedule(
 pub async fn buildings_delete(
     Path(id): Path<String>,
     State(pool): State<Db>,
+    headers: HeaderMap,
 ) -> impl axum::response::IntoResponse {
     let _ = queries::delete_building(&pool, &id).await;
-    Redirect::to("/admin").into_response()
+    redirect_after_post(&headers, "/admin")
 }
 
 // --- Apartments ---
@@ -596,12 +618,13 @@ pub async fn apartments_update(
 pub async fn apartments_delete(
     Path((building_id, apartment_id)): Path<(String, String)>,
     State(pool): State<Db>,
+    headers: HeaderMap,
 ) -> impl axum::response::IntoResponse {
     if let Err(err) = load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
         return err.into_response();
     }
     let _ = queries::delete_apartment(&pool, &apartment_id).await;
-    Redirect::to(&format!("/admin/buildings/{building_id}")).into_response()
+    redirect_after_post(&headers, &format!("/admin/buildings/{building_id}"))
 }
 
 /// Persist a manually chosen apartment order. Receives the apartment ids as
@@ -913,6 +936,7 @@ pub async fn ownerships_update(
 pub async fn ownerships_delete(
     Path((building_id, apartment_id, ownership_id)): Path<(String, String, String)>,
     State(pool): State<Db>,
+    headers: HeaderMap,
 ) -> impl axum::response::IntoResponse {
     if let Err(err) = load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
         return err.into_response();
@@ -927,10 +951,10 @@ pub async fn ownerships_delete(
     }
 
     let _ = queries::delete_ownership(&pool, &ownership_id).await;
-    Redirect::to(&format!(
-        "/admin/buildings/{building_id}/apartments/{apartment_id}"
-    ))
-    .into_response()
+    redirect_after_post(
+        &headers,
+        &format!("/admin/buildings/{building_id}/apartments/{apartment_id}"),
+    )
 }
 
 // --- Tenancies ---
@@ -1217,6 +1241,7 @@ pub async fn tenancies_update(
 pub async fn tenancies_delete(
     Path((building_id, apartment_id, tenancy_id)): Path<(String, String, String)>,
     State(pool): State<Db>,
+    headers: HeaderMap,
 ) -> impl axum::response::IntoResponse {
     if let Err(err) = load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
         return err.into_response();
@@ -1231,10 +1256,10 @@ pub async fn tenancies_delete(
     }
 
     let _ = queries::delete_tenancy(&pool, &tenancy_id).await;
-    Redirect::to(&format!(
-        "/admin/buildings/{building_id}/apartments/{apartment_id}"
-    ))
-    .into_response()
+    redirect_after_post(
+        &headers,
+        &format!("/admin/buildings/{building_id}/apartments/{apartment_id}"),
+    )
 }
 
 #[cfg(test)]

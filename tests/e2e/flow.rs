@@ -674,4 +674,131 @@ async fn name_length_limits_are_enforced() {
     assert_eq!(apartment_accepted.status(), StatusCode::SEE_OTHER);
 }
 
+#[tokio::test]
+async fn deletes_redirect_htmx_requests_via_hx_redirect_header() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    let building_id = create_building(&h, &client, "Haus HX").await;
+
+    // htmx-driven deletes (HX-Request) get a 200 + HX-Redirect header so
+    // htmx performs a full-page navigation instead of swapping the empty
+    // response body into the form.
+    let hx = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/delete",
+        h.base_url
+    )))
+    .header("HX-Request", "true")
+    .send()
+    .await
+    .expect("htmx delete building");
+    assert_eq!(hx.status(), StatusCode::OK);
+    let expected = "/admin";
+    assert_eq!(
+        hx.headers()
+            .get("HX-Redirect")
+            .and_then(|v| v.to_str().ok()),
+        Some(expected),
+        "htmx deletes should respond with HX-Redirect"
+    );
+
+    // Deleting an apartment redirects back to the building page.
+    let building2 = create_building(&h, &client, "Haus HX 2").await;
+    let apartment_id = create_apartment(&h, &client, &building2, "Wohnung HX").await;
+    let apt_url = format!(
+        "{}/admin/buildings/{building2}/apartments/{apartment_id}",
+        h.base_url
+    );
+
+    // Deleting an ownership or tenancy redirects back to the apartment page.
+    basic_auth(client.post(format!("{apt_url}/ownerships")))
+        .form(&[
+            ("name", "Otto"),
+            ("email", "otto@example.com"),
+            ("start_date", "2026-01-01"),
+        ])
+        .send()
+        .await
+        .expect("create ownership");
+    basic_auth(client.post(format!("{apt_url}/tenancies")))
+        .form(&[
+            ("name", "Bob"),
+            ("email", "bob@example.com"),
+            ("start_date", "2026-01-01"),
+        ])
+        .send()
+        .await
+        .expect("create tenancy");
+    let ownership_id = queries::list_ownerships(&h.pool, &apartment_id)
+        .await
+        .expect("list ownerships")[0]
+        .id
+        .clone();
+    let tenancy_id = queries::list_tenancies(&h.pool, &apartment_id)
+        .await
+        .expect("list tenancies")[0]
+        .id
+        .clone();
+    let apartment_path = format!("/admin/buildings/{building2}/apartments/{apartment_id}");
+    for (label, url) in [
+        (
+            "ownership",
+            format!("{apt_url}/ownerships/{ownership_id}/delete"),
+        ),
+        (
+            "tenancy",
+            format!("{apt_url}/tenancies/{tenancy_id}/delete"),
+        ),
+    ] {
+        let resp = basic_auth(client.post(url))
+            .header("HX-Request", "true")
+            .send()
+            .await
+            .unwrap_or_else(|_| panic!("htmx delete {label}"));
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get("HX-Redirect")
+                .and_then(|v| v.to_str().ok()),
+            Some(apartment_path.as_str()),
+            "htmx delete of {label} should respond with HX-Redirect"
+        );
+    }
+
+    let hx_apartment = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building2}/apartments/{apartment_id}/delete",
+        h.base_url
+    )))
+    .header("HX-Request", "true")
+    .send()
+    .await
+    .expect("htmx delete apartment");
+    assert_eq!(hx_apartment.status(), StatusCode::OK);
+    let expected = format!("/admin/buildings/{building2}");
+    assert_eq!(
+        hx_apartment
+            .headers()
+            .get("HX-Redirect")
+            .and_then(|v| v.to_str().ok()),
+        Some(expected.as_str()),
+        "htmx delete of apartment should respond with HX-Redirect"
+    );
+
+    // Plain form posts keep the classic 303 + Location redirect.
+    let building3 = create_building(&h, &client, "Haus Plain").await;
+    let plain =
+        basic_auth(client.post(format!("{}/admin/buildings/{building3}/delete", h.base_url)))
+            .send()
+            .await
+            .expect("plain delete building");
+    assert_eq!(plain.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        plain
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok()),
+        Some("/admin")
+    );
+}
+
 type Regex = regex::Regex;
