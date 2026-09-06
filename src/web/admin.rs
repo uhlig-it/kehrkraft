@@ -401,16 +401,26 @@ pub async fn buildings_delete(
 
 // --- Apartments ---
 
+/// Form data of the "new apartment" page: besides name and description it
+/// collects the initial owner, because the database requires an ownership
+/// record to exist from the moment the apartment is created.
 #[derive(serde::Deserialize)]
-pub struct ApartmentForm {
+pub struct CreateApartmentForm {
     pub name: String,
     pub description: String,
-    /// Initial owner of the apartment; the database requires an ownership
-    /// record to exist from the moment the apartment is created.
     pub owner_name: String,
     pub owner_email: String,
     pub owner_start_date: String,
     pub owner_end_date: Option<String>,
+}
+
+/// Form data of the "edit apartment" page. Only name and description are
+/// edited there; owners are managed separately on the apartment page, so this
+/// form deliberately has no owner fields.
+#[derive(serde::Deserialize)]
+pub struct UpdateApartmentForm {
+    pub name: String,
+    pub description: String,
 }
 
 /// Load building or return a short error; used by apartment subroutes.
@@ -520,7 +530,7 @@ pub async fn apartments_new(
 pub async fn apartments_create(
     Path(building_id): Path<String>,
     State(pool): State<Db>,
-    Form(form): Form<ApartmentForm>,
+    Form(form): Form<CreateApartmentForm>,
 ) -> impl axum::response::IntoResponse {
     let end_opt = normalize_end_date(form.owner_end_date.as_deref());
     match queries::create_apartment(
@@ -631,7 +641,7 @@ pub async fn apartments_show(
 pub async fn apartments_update(
     Path((building_id, apartment_id)): Path<(String, String)>,
     State(pool): State<Db>,
-    Form(form): Form<ApartmentForm>,
+    Form(form): Form<UpdateApartmentForm>,
 ) -> impl axum::response::IntoResponse {
     let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
         Ok(a) => a,
