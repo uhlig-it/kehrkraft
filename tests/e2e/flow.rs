@@ -989,3 +989,94 @@ async fn demo_mode_disables_auth_and_shows_banner() {
         "demo banner should appear on the building detail page"
     );
 }
+
+/// The danger zone exposes the building's rotation seed as a dropdown with
+/// the current value selected; changing it affects only that building.
+#[tokio::test]
+async fn rotation_seed_can_be_changed_per_building() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    let first = create_building(&h, &client, "Haus A").await;
+    let second = create_building(&h, &client, "Haus B").await;
+
+    // Two apartments, so the dropdown must offer exactly the phases 0..1.
+    for name in ["EG links", "OG rechts"] {
+        create_apartment(&h, &client, &first, name).await;
+    }
+
+    // The building page shows the danger zone with the dropdown, the current
+    // value (0) selected, and a form posting to the rotation_seed endpoint.
+    let page = basic_auth(client.get(format!("{}/admin/buildings/{first}", h.base_url)))
+        .send()
+        .await
+        .expect("fetch building page");
+    assert_eq!(page.status(), StatusCode::OK);
+    let body = page.text().await.expect("building body");
+    assert!(
+        body.contains("Gefahrenzone"),
+        "danger zone section, got {body:?}"
+    );
+    assert!(
+        body.contains(r#"<option value="0" selected>0</option>"#),
+        "current seed selected, got {body:?}"
+    );
+    assert!(
+        body.contains(r#"<option value="1">1</option>"#),
+        "dropdown offers every distinct phase 0..n-1, got {body:?}"
+    );
+    assert!(
+        !body.contains(r#"<option value="2">"#),
+        "shifting by the apartment count repeats phase 0 and must not be offered, got {body:?}"
+    );
+    assert!(
+        body.contains("/rotation_seed"),
+        "danger zone form targets the rotation_seed endpoint"
+    );
+
+    // Posting a new seed redirects back to the building page.
+    let update = basic_auth(client.post(format!(
+        "{}/admin/buildings/{first}/rotation_seed",
+        h.base_url
+    )))
+    .form(&[("rotation_seed", "3")])
+    .send()
+    .await
+    .expect("set rotation seed");
+    assert_eq!(update.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        update
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok()),
+        Some(format!("/admin/buildings/{first}").as_str())
+    );
+
+    // The changed building now shows the new value as selected.
+    let after = basic_auth(client.get(format!("{}/admin/buildings/{first}", h.base_url)))
+        .send()
+        .await
+        .expect("fetch building page after change");
+    assert!(
+        after
+            .text()
+            .await
+            .expect("after body")
+            .contains(r#"<option value="3" selected>3</option>"#),
+        "new seed selected on the building page"
+    );
+
+    // Other buildings keep their default seed: the change is scoped.
+    let other = basic_auth(client.get(format!("{}/admin/buildings/{second}", h.base_url)))
+        .send()
+        .await
+        .expect("fetch other building page");
+    assert!(
+        other
+            .text()
+            .await
+            .expect("other body")
+            .contains(r#"<option value="0" selected>0</option>"#),
+        "other building must keep its default seed"
+    );
+}

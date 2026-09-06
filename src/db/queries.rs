@@ -134,6 +134,31 @@ pub async fn delete_building(pool: &Db, id: &str) -> Result<bool, sqlx::Error> {
     Ok(res.rows_affected() > 0)
 }
 
+/// Change the rotation offset of a single building. Scoped by `id`; other
+/// buildings keep their seed.
+pub async fn update_building_rotation_seed(
+    pool: &Db,
+    id: &str,
+    rotation_seed: i64,
+) -> Result<Building, sqlx::Error> {
+    sqlx::query("UPDATE buildings SET rotation_seed = ? WHERE id = ?")
+        .bind(rotation_seed)
+        .bind(id)
+        .execute(pool)
+        .await?;
+
+    sqlx::query_as::<_, Building>(
+        r#"
+        SELECT id, name, description, secret_slug, rotation_seed, created_at, updated_at
+        FROM buildings
+        WHERE id = ?
+        "#,
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+}
+
 // Apartments CRUD
 
 pub async fn list_apartments(pool: &Db, building_id: &str) -> Result<Vec<Apartment>, sqlx::Error> {
@@ -615,6 +640,45 @@ mod tests {
 
         let after = list_buildings(&pool).await.expect("list after delete");
         assert_eq!(after.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn rotation_seed_update_is_scoped_to_building() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory");
+
+        migrate(&pool).await.expect("migrate");
+
+        let first = create_building(&pool, "First", "", "Alice", "alice@example.com")
+            .await
+            .expect("create building");
+        let second = create_building(&pool, "Second", "", "Bob", "bob@example.com")
+            .await
+            .expect("create building");
+        assert_eq!(first.rotation_seed, 0);
+        assert_eq!(second.rotation_seed, 0);
+
+        let updated = update_building_rotation_seed(&pool, &first.id, 3)
+            .await
+            .expect("update seed");
+        assert_eq!(updated.rotation_seed, 3);
+
+        let (got_first, _) = get_building(&pool, &first.id)
+            .await
+            .expect("get first")
+            .expect("first exists");
+        assert_eq!(got_first.rotation_seed, 3);
+        let (got_second, _) = get_building(&pool, &second.id)
+            .await
+            .expect("get second")
+            .expect("second exists");
+        assert_eq!(
+            got_second.rotation_seed, 0,
+            "other building must keep its seed"
+        );
     }
 
     #[tokio::test]

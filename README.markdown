@@ -9,7 +9,6 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 * Create a dedicated page that lists people and their roles (admin, owner, tenant) and link to their objects. Whenever a person occurs in some role on the site, link to the person's page.
 * Hourly database backup to S3 with retention (port sqlite-vault to sqlite-vault-rs)
 * Internationalization: Keep strings ready for EN/DE; "Kehrwoche" as canonical term. Collect all strings that need translation and suggest German alternatives, so that we can support both languages
-* Remove `rotation_seed` if really unused
 * Support path variables:
   - `TYPST_BIN_PATH` (optional) - Full path to the typst executable that is to be used for generating the PDF invoice. Defaults to the first `typst` in the `$PATH`. If set and non-empty, that value is returned directly. Otherwise, "typst" is found in the system PATH.
   - `TYPST_SPOOL_DIR` (optional) - Path to an existing directory where the typst file for the PDF invoice, together with the JSON containing billing data and the Factur-X XML, will be stored. This contents of this directory are ephemeral, but they may be useful for troubleshooting PDF generation. Defaults to `$TMPDIR`.

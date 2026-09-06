@@ -317,6 +317,10 @@ pub fn build_router(
             axum::routing::post(admin::buildings_delete),
         )
         .route(
+            "/admin/buildings/{id}/rotation_seed",
+            axum::routing::post(admin::buildings_rotation_seed_update),
+        )
+        .route(
             "/admin/buildings/{id}/apartments",
             get(admin::apartments_index_redirect).post(admin::apartments_create),
         )

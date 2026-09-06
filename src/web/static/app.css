@@ -250,6 +250,122 @@ a {
   background: var(--danger-soft);
 }
 
+/* Warning tape: the seam between reversible rotation tweaks (above) and
+   irreversible deletion (below). Static on purpose; it marks where the
+   section turns destructive, in the building-vernacular of Kehrwoche. */
+.hazard-band {
+  height: 7px;
+  margin: 0 -1.25rem 1.1rem;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--danger) 0 10px,
+    var(--surface) 10px 20px
+  );
+}
+
+.rotation-seed-form {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.1rem;
+}
+
+/* Both action buttons hug the card's right edge so they share one column;
+   the auto margin also keeps them right-aligned after a row wraps. */
+.rotation-seed-form > .btn {
+  margin-left: auto;
+}
+
+.rotation-seed-left {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  min-width: 0;
+  /* Take everything the button column leaves, so the hint can fill the row. */
+  flex: 1 1 0%;
+}
+
+.rotation-seed-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.rotation-seed-controls label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.rotation-seed-controls select {
+  font: inherit;
+  padding: 0.4rem 0.65rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.rotation-seed-controls select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.rotation-seed-hint {
+  margin: 0;
+  /* basis 0: the hint starts empty and grows exactly into the remaining
+     space, instead of wrapping at its text's natural width first. */
+  flex: 1 1 0%;
+  min-width: 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.danger-delete {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.danger-delete form {
+  margin-left: auto;
+}
+
+.danger-delete .muted {
+  margin: 0;
+  flex: 1 1 0%;
+  min-width: 0;
+}
+
+/* Below ~400px the rows would otherwise squeeze: the flex-grow of the hint
+   column and the button would share the line first, capping the hint at a
+   narrow column and forcing the select under its label. Stacking the rows
+   gives the hints the full card width instead. */
+@media (max-width: 400px) {
+  .rotation-seed-form,
+  .rotation-seed-left,
+  .danger-delete {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .rotation-seed-form > .btn,
+  .danger-delete form {
+    align-self: flex-end;
+    margin-left: 0;
+  }
+}
+
 /* ---------- Tables ---------- */
 
 .table {

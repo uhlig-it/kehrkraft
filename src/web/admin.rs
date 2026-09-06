@@ -148,6 +148,8 @@ pub struct BuildingsShowTemplate {
     pub apartments: Vec<ApartmentRow>,
     pub year: i32,
     pub schedule: Vec<ScheduleRow>,
+    /// Dropdown options as (value, selected) pairs for the rotation offset.
+    pub rotation_options: Vec<(i64, bool)>,
 }
 
 #[derive(Template)]
@@ -341,6 +343,10 @@ pub async fn buildings_show(
                             .into_response()
                     }
                 };
+            // The rotation phase repeats with the apartment count, so the
+            // dropdown offers exactly the distinct phases 0..n-1; the current
+            // value is always included even when it lies outside that range.
+            let rotation_options = rotation_seed_options(building.rotation_seed, apartments.len());
             render(BuildingsShowTemplate {
                 title: building.name.clone(),
                 building,
@@ -348,6 +354,7 @@ pub async fn buildings_show(
                 apartments,
                 year,
                 schedule: schedule_rows(schedule, today),
+                rotation_options,
             })
         }
         Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
@@ -397,6 +404,48 @@ pub async fn buildings_delete(
 ) -> impl axum::response::IntoResponse {
     let _ = queries::delete_building(&pool, &id).await;
     redirect_after_post(&headers, "/admin")
+}
+
+/// Form data of the danger zone rotation-offset dropdown.
+#[derive(serde::Deserialize)]
+pub struct RotationSeedForm {
+    pub rotation_seed: i64,
+}
+
+fn rotation_seed_options(current: i64, apartment_count: usize) -> Vec<(i64, bool)> {
+    // The rotation phase repeats with the number of apartments (shifting by
+    // the count equals shifting by 0), so the canonical options are exactly
+    // 0..n-1; anything beyond would only repeat an equivalent phase. The
+    // current value is always included so the dropdown stays in sync even if
+    // the stored seed lies outside that range.
+    let mut options: Vec<(i64, bool)> = (0..apartment_count as i64)
+        .map(|v| (v, v == current))
+        .collect();
+    if !options.iter().any(|(v, _)| *v == current) {
+        options.push((current, true));
+    }
+    options
+}
+
+/// Change the rotation offset of one building. The building is addressed in
+/// the path (scoped, never global) and must exist.
+pub async fn buildings_rotation_seed_update(
+    Path(id): Path<String>,
+    State(pool): State<Db>,
+    headers: HeaderMap,
+    Form(form): Form<RotationSeedForm>,
+) -> impl axum::response::IntoResponse {
+    if let Err(err) = load_building(&pool, &id).await {
+        return err.into_response();
+    }
+    match queries::update_building_rotation_seed(&pool, &id, form.rotation_seed).await {
+        Ok(_) => redirect_after_post(&headers, &format!("/admin/buildings/{id}")),
+        Err(_) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Rotations-Versatz konnte nicht gespeichert werden.",
+        )
+            .into_response(),
+    }
 }
 
 // --- Apartments ---
@@ -1162,4 +1211,31 @@ pub async fn tenancies_delete(
         &headers,
         &format!("/admin/buildings/{building_id}/apartments/{apartment_id}"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rotation_seed_options;
+
+    #[test]
+    fn options_cover_exactly_zero_to_n_minus_one() {
+        assert_eq!(
+            rotation_seed_options(0, 3),
+            vec![(0, true), (1, false), (2, false)]
+        );
+    }
+
+    #[test]
+    fn options_include_out_of_range_current() {
+        assert_eq!(
+            rotation_seed_options(12, 3),
+            vec![(0, false), (1, false), (2, false), (12, true)]
+        );
+    }
+
+    #[test]
+    fn apartmentless_building_offers_only_zero() {
+        assert_eq!(rotation_seed_options(0, 0), vec![(0, true)]);
+        assert_eq!(rotation_seed_options(5, 0), vec![(5, true)]);
+    }
 }
