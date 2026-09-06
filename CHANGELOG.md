@@ -3,6 +3,27 @@
 All notable changes to this project will be documented in this file.
 
 <!-- git-cliff: end of header -->
+## [0.3.0] - 2026-09-06
+
+### Added
+
+- [**breaking**] Rework cleaning rotation for fairness and stability
+- Redesign admin UI and localize it to German
+- Balanced two-column Kehrwoche PDF with logo and QR code
+- [**breaking**] Enforce validation in the database layer
+
+### Changed
+
+- Keep migration files byte-stable in pre-commit hooks
+- Update TODOs
+- Make tmuxinator paths relative to work from wtg worktrees
+- Release 0.3.0
+
+### Fixed
+
+- Persist dev port across restarts and fall back when it is taken
+- Fixup! chore: Update TODOs
+
 ## [Unreleased]
 
 ### Added
