@@ -32,11 +32,12 @@
 )
 
 #let kehrwoche(building_name: str, year: int, left_rows: array, right_rows: array, pdf_url: str, ical_url: str) = [
-  // Logo floats in the top-right corner, independent of the document flow
-  // (so its size never pushes the schedule down). dy lifts it into the top
-  // margin so it stays clear of the table header.
-  #place(top + right, dx: -0.35cm, dy: -0.9cm)[
-    #image("logo.svg", height: 2.2cm)
+  // Logo floats in the top-right corner, right-aligned to the page margin
+  // and independent of the document flow (so its size never pushes the
+  // schedule down). dy lifts it into the top margin so it stays clear of
+  // the table header.
+  #place(top + right, dy: -0.9cm)[
+    #image("logo.svg", height: 2.7cm)
   ]
 
   #align(left)[
