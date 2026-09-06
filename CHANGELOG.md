@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 <!-- git-cliff: end of header -->
 ## [0.4.0] - 2026-09-06
 
+### Added
+
+- Add iCal feed for the Kehrwoche schedule
+- Polish resident links and PDF logo
+- Expose rotation seed in the admin danger zone
+
+### Changed
+
+- *(deps)* Update rust crate chrono to v0.4.45 (#3)
+- Release 0.4.0
+- Release 0.4.0
+- Release 0.4.0
+- Release 0.4.0
+
+### Fixed
+
+- Accept apartment edit form without owner fields
+
+## [0.4.0] - 2026-09-06
+
 ## [0.4.0] - 2026-09-06
 
 ### Added
