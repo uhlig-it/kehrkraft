@@ -266,6 +266,45 @@ async fn create_building_apartment_owner_tenancy_flow() {
         )),
         "edit form posts to update, got {edit_body:?}"
     );
+
+    // The edit form collects only name and description — owners are managed
+    // on the apartment page — and submitting it must not require owner fields.
+    let update = basic_auth(client.post(format!("{apt_url}/update")))
+        .form(&[
+            ("name", "EG links saniert"),
+            ("description", "Frisch gestrichen"),
+        ])
+        .send()
+        .await
+        .expect("update apartment");
+    assert_eq!(
+        update.status(),
+        StatusCode::SEE_OTHER,
+        "apartment update redirects to the show page"
+    );
+    assert_eq!(
+        update
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok()),
+        Some(format!("/admin/buildings/{id}/apartments/{apartment_id}").as_str())
+    );
+
+    // The show page reflects the saved changes.
+    let updated = basic_auth(client.get(apt_url.clone()))
+        .send()
+        .await
+        .expect("fetch updated apartment");
+    assert_eq!(updated.status(), StatusCode::OK);
+    let updated_body = updated.text().await.expect("updated apartment body");
+    assert!(
+        updated_body.contains("EG links saniert"),
+        "renamed apartment on show page, got {updated_body:?}"
+    );
+    assert!(
+        updated_body.contains("Frisch gestrichen"),
+        "updated description on show page, got {updated_body:?}"
+    );
 }
 
 /// Dragging the drag handle ("⋮⋮") reorders apartments: Sortable.js moves the
