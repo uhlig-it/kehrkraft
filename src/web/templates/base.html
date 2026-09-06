@@ -1,27 +1,28 @@
 <!doctype html>
-<html lang="en">
+<html lang="de">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Kehrkraft{% endblock %}</title>
     <link rel="stylesheet" href="/static/app.css">
+    <link rel="icon" href="/kehrkraft.svg" type="image/svg+xml">
   </head>
   <body>
     <header class="topbar">
       <div class="topbar-inner">
         <a class="brand" href="/admin">
-          <img src="/kehrkraft.svg" alt="Kehrkraft logo" class="brand-logo">
+          <img src="/kehrkraft.svg" alt="Kehrkraft-Logo" class="brand-logo">
           <span class="brand-name">Kehrkraft</span>
         </a>
         <nav class="topnav">
-          <a href="/admin">Buildings</a>
+          <a href="/admin">Gebäude</a>
         </nav>
       </div>
     </header>
     <main class="container">
       {% block content %}{% endblock %}
     </main>
-    <footer class="footer">Kehrkraft &mdash; Kehrwoche Cleaning Schedules</footer>
+    <footer class="footer">Kehrkraft · Kehrwoche-Rotationsplan</footer>
     <script src="/static/htmx.min.js"></script>
     <script src="/static/sortable.min.js"></script>
   </body>

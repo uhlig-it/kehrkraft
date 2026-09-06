@@ -9,6 +9,7 @@ use axum::response::IntoResponse as _;
 use axum::response::Redirect;
 use axum::Form;
 use chrono::{Datelike, Local, NaiveDate};
+use std::collections::HashMap;
 
 /// Render an Askama template into an axum response.
 /// (askama_axum was removed in askama 0.13; this is the replacement.)
@@ -71,15 +72,82 @@ pub struct BuildingsNewTemplate {
     pub admin_email: String,
 }
 
+/// One row of the Kehrwoche roster as the templates render it: dates in
+/// German display format, plus a flag for the week that is currently running.
+pub struct ScheduleRow {
+    pub iso_week: u32,
+    pub start: String,
+    pub end: String,
+    pub assignee_name: Option<String>,
+    pub delegated: bool,
+    pub is_current: bool,
+}
+
+/// Map scheduler weeks to display rows, marking the week containing `today`.
+fn schedule_rows(schedule: Vec<WeekAssignment>, today: NaiveDate) -> Vec<ScheduleRow> {
+    schedule
+        .into_iter()
+        .map(|w| ScheduleRow {
+            iso_week: w.iso_week,
+            start: w.start.format("%d.%m.%Y").to_string(),
+            end: w.end.format("%d.%m.%Y").to_string(),
+            assignee_name: w.assignee_name,
+            delegated: w.delegated,
+            is_current: w.start <= today && today <= w.end,
+        })
+        .collect()
+}
+
+/// One row of the floor stack on the building page: the apartment itself, the
+/// plate letter shown next to its name, and its position in the cleaning
+/// rotation (creation order, the rotation's tie-breaks mirror the scheduler).
+pub struct ApartmentRow {
+    pub apartment: Apartment,
+    pub plate: String,
+    pub rotation: u32,
+}
+
+/// Map the buildings' apartments (display order) to rows with a rotation rank.
+fn apartment_rows(apartments: Vec<Apartment>) -> Vec<ApartmentRow> {
+    let mut rotation: Vec<&Apartment> = apartments.iter().collect();
+    rotation.sort_by(|a, b| {
+        a.created_at
+            .cmp(&b.created_at)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    let rank: HashMap<String, u32> = rotation
+        .iter()
+        .enumerate()
+        .map(|(i, a)| (a.id.clone(), (i + 1) as u32))
+        .collect();
+    apartments
+        .into_iter()
+        .map(|a| {
+            let plate = a
+                .name
+                .chars()
+                .next()
+                .map(|c| c.to_uppercase().to_string())
+                .unwrap_or_default();
+            let rotation = rank.get(&a.id).copied().unwrap_or(0);
+            ApartmentRow {
+                apartment: a,
+                plate,
+                rotation,
+            }
+        })
+        .collect()
+}
+
 #[derive(Template)]
 #[template(path = "admin/buildings/show.html")]
 pub struct BuildingsShowTemplate {
     pub title: String,
     pub building: Building,
     pub admins: Vec<BuildingAdministrator>,
-    pub apartments: Vec<Apartment>,
+    pub apartments: Vec<ApartmentRow>,
     pub year: i32,
-    pub schedule: Vec<WeekAssignment>,
+    pub schedule: Vec<ScheduleRow>,
 }
 
 #[derive(Template)]
@@ -88,7 +156,7 @@ pub struct BuildingsScheduleTemplate {
     pub title: String,
     pub building: Building,
     pub year: i32,
-    pub schedule: Vec<WeekAssignment>,
+    pub schedule: Vec<ScheduleRow>,
 }
 
 #[derive(Template)]
@@ -131,7 +199,7 @@ pub struct ApartmentsShowTemplate {
 #[template(path = "admin/apartments/_table_body.html")]
 pub struct ApartmentsTableBodyTemplate {
     pub building: Building,
-    pub apartments: Vec<Apartment>,
+    pub apartments: Vec<ApartmentRow>,
 }
 
 #[derive(Template)]
@@ -172,10 +240,10 @@ const MAX_NAME_LEN: usize = 30;
 
 fn validate_name(name: &str) -> Result<(), String> {
     if name.trim().is_empty() {
-        return Err("Name must not be empty".into());
+        return Err("Name darf nicht leer sein.".into());
     }
     if name.chars().count() > MAX_NAME_LEN {
-        return Err(format!("Name must not exceed {MAX_NAME_LEN} characters"));
+        return Err(format!("Name darf höchstens {MAX_NAME_LEN} Zeichen haben."));
     }
     Ok(())
 }
@@ -184,10 +252,10 @@ fn validate_email(email: &str) -> Result<(), String> {
     let email = email.trim();
     if let Some(at_pos) = email.find('@') {
         if !email[at_pos + 1..].contains('.') {
-            return Err("Email must contain a dot after '@'".into());
+            return Err("Die E-Mail-Adresse muss nach dem '@' einen Punkt enthalten.".into());
         }
     } else {
-        return Err("Email must contain '@'".into());
+        return Err("Die E-Mail-Adresse muss ein '@' enthalten.".into());
     }
     Ok(())
 }
@@ -199,18 +267,18 @@ fn validate_person_input(
     end_date: Option<&str>,
 ) -> Result<(), String> {
     if name.trim().is_empty() {
-        return Err("Name must not be empty".into());
+        return Err("Name darf nicht leer sein.".into());
     }
     validate_email(email)?;
 
     let start = chrono::NaiveDate::parse_from_str(start_date, "%Y-%m-%d")
-        .map_err(|_| "start_date must be YYYY-MM-DD".to_string())?;
+        .map_err(|_| "Startdatum muss im Format JJJJ-MM-TT vorliegen.".to_string())?;
     if let Some(ed) = end_date {
         if !ed.trim().is_empty() {
             let end = chrono::NaiveDate::parse_from_str(ed, "%Y-%m-%d")
-                .map_err(|_| "end_date must be YYYY-MM-DD".to_string())?;
+                .map_err(|_| "Enddatum muss im Format JJJJ-MM-TT vorliegen.".to_string())?;
             if start > end {
-                return Err("start_date must be before or equal to end_date".into());
+                return Err("Das Startdatum darf nicht nach dem Enddatum liegen.".into());
             }
         }
     }
@@ -220,12 +288,12 @@ fn validate_person_input(
 pub async fn buildings_index(State(pool): State<Db>) -> impl axum::response::IntoResponse {
     match queries::list_buildings(&pool).await {
         Ok(buildings) => render(BuildingsIndexTemplate {
-            title: "Buildings",
+            title: "Gebäude",
             buildings,
         }),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to load buildings",
+            "Gebäude konnten nicht geladen werden.",
         )
             .into_response(),
     }
@@ -233,7 +301,7 @@ pub async fn buildings_index(State(pool): State<Db>) -> impl axum::response::Int
 
 pub async fn buildings_new() -> impl axum::response::IntoResponse {
     render(BuildingsNewTemplate {
-        title: "New Building",
+        title: "Neues Gebäude anlegen",
         error: None,
         name: String::new(),
         description: String::new(),
@@ -253,12 +321,12 @@ pub async fn buildings_create(
             form.admin_name
                 .trim()
                 .is_empty()
-                .then(|| "Administrator name must not be empty".to_string())
+                .then(|| "Name des Ansprechpartners darf nicht leer sein.".to_string())
         })
         .or_else(|| validate_email(&form.admin_email).err());
     if let Some(msg) = error {
         return render_bad_request(BuildingsNewTemplate {
-            title: "New Building",
+            title: "Neues Gebäude anlegen",
             error: Some(msg),
             name: form.name,
             description: form.description,
@@ -279,7 +347,7 @@ pub async fn buildings_create(
         Ok(building) => Redirect::to(&format!("/admin/buildings/{}", building.id)).into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to create building",
+            "Gebäude konnte nicht angelegt werden.",
         )
             .into_response(),
     }
@@ -292,48 +360,46 @@ pub async fn buildings_show(
     match queries::get_building(&pool, &id).await {
         Ok(Some((building, admins))) => {
             let apartments = match queries::list_apartments(&pool, &building.id).await {
-                Ok(apartments) => apartments,
+                Ok(apartments) => apartment_rows(apartments),
                 Err(_) => {
                     return (
                         axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        "Failed to load apartments",
+                        "Wohnungen konnten nicht geladen werden.",
                     )
                         .into_response()
                 }
             };
             // Compact schedule: only the remaining weeks of the current year.
             let year = Local::now().date_naive().year();
+            let today = Local::now().date_naive();
             let schedule: Vec<WeekAssignment> =
                 match scheduler::schedule_for_year(&building.id, year, &pool).await {
-                    Ok(weeks) => {
-                        let today = Local::now().date_naive();
-                        weeks
-                            .into_iter()
-                            .filter(|w| w.end >= today)
-                            .take(12)
-                            .collect()
-                    }
+                    Ok(weeks) => weeks
+                        .into_iter()
+                        .filter(|w| w.end >= today)
+                        .take(12)
+                        .collect(),
                     Err(_) => {
                         return (
                             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                            "Failed to compute schedule",
+                            "Der Plan konnte nicht berechnet werden.",
                         )
                             .into_response()
                     }
                 };
             render(BuildingsShowTemplate {
-                title: format!("Building: {}", building.name),
+                title: building.name.clone(),
                 building,
                 admins,
                 apartments,
                 year,
-                schedule,
+                schedule: schedule_rows(schedule, today),
             })
         }
-        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
+        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to load building",
+            "Gebäude konnte nicht geladen werden.",
         )
             .into_response(),
     }
@@ -346,24 +412,25 @@ pub async fn buildings_schedule(
     match queries::get_building(&pool, &id).await {
         Ok(Some((building, _admins))) => {
             let year = Local::now().date_naive().year();
+            let today = Local::now().date_naive();
             match scheduler::schedule_for_year(&building.id, year, &pool).await {
                 Ok(schedule) => render(BuildingsScheduleTemplate {
-                    title: format!("Schedule Preview: {} ({})", building.name, year),
+                    title: "Jahresplan".to_string(),
                     building,
                     year,
-                    schedule,
+                    schedule: schedule_rows(schedule, today),
                 }),
                 Err(_) => (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    "Failed to compute schedule",
+                    "Der Plan konnte nicht berechnet werden.",
                 )
                     .into_response(),
             }
         }
-        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
+        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to load building",
+            "Gebäude konnte nicht geladen werden.",
         )
             .into_response(),
     }
@@ -393,10 +460,10 @@ async fn load_building(
 ) -> Result<Building, (axum::http::StatusCode, &'static str)> {
     match queries::get_building(pool, building_id).await {
         Ok(Some((building, _))) => Ok(building),
-        Ok(None) => Err((axum::http::StatusCode::NOT_FOUND, "Not found")),
+        Ok(None) => Err((axum::http::StatusCode::NOT_FOUND, "Nicht gefunden")),
         Err(_) => Err((
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to load building",
+            "Gebäude konnte nicht geladen werden.",
         )),
     }
 }
@@ -410,14 +477,14 @@ async fn load_apartment_owned_by(
     match queries::get_apartment(pool, apartment_id).await {
         Ok(Some(apartment)) => {
             if apartment.building_id != building_id {
-                return Err((axum::http::StatusCode::NOT_FOUND, "Not found"));
+                return Err((axum::http::StatusCode::NOT_FOUND, "Nicht gefunden"));
             }
             Ok(apartment)
         }
-        Ok(None) => Err((axum::http::StatusCode::NOT_FOUND, "Not found")),
+        Ok(None) => Err((axum::http::StatusCode::NOT_FOUND, "Nicht gefunden")),
         Err(_) => Err((
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to load apartment",
+            "Wohnung konnte nicht geladen werden.",
         )),
     }
 }
@@ -445,7 +512,7 @@ async fn render_apartment_show_error(
         queries::list_tenancies(pool, apartment_id).await,
     ) {
         (Ok(ownerships), Ok(tenancies)) => render_bad_request(ApartmentsShowTemplate {
-            title: format!("Apartment: {}", apartment.name),
+            title: apartment.name.clone(),
             building,
             apartment,
             ownerships,
@@ -456,7 +523,7 @@ async fn render_apartment_show_error(
         }),
         _ => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to load apartment details",
+            "Wohnungsdaten konnten nicht geladen werden.",
         )
             .into_response(),
     }
@@ -478,7 +545,7 @@ pub async fn apartments_new(
         Err(err) => return err.into_response(),
     };
     render(ApartmentsNewTemplate {
-        title: format!("New Apartment: {}", building.name),
+        title: "Neue Wohnung".to_string(),
         building,
         error: None,
         name: String::new(),
@@ -497,7 +564,7 @@ pub async fn apartments_create(
             Err(err) => return err.into_response(),
         };
         return render_bad_request(ApartmentsNewTemplate {
-            title: format!("New Apartment: {}", building.name),
+            title: "Neue Wohnung".to_string(),
             building,
             error: Some(msg),
             name: form.name,
@@ -513,7 +580,7 @@ pub async fn apartments_create(
         .into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to create apartment",
+            "Wohnung konnte nicht angelegt werden.",
         )
             .into_response(),
     }
@@ -534,7 +601,7 @@ pub async fn apartments_edit(
     let name = apartment.name.clone();
     let description = apartment.description.clone();
     render(ApartmentsEditTemplate {
-        title: format!("Edit Apartment: {}", apartment.name),
+        title: "Wohnung bearbeiten".to_string(),
         building,
         apartment,
         error: None,
@@ -561,7 +628,7 @@ pub async fn apartments_show(
         queries::list_tenancies(&pool, &apartment_id).await,
     ) {
         (Ok(ownerships), Ok(tenancies)) => render(ApartmentsShowTemplate {
-            title: format!("Apartment: {}", apartment.name),
+            title: apartment.name.clone(),
             building,
             apartment,
             ownerships,
@@ -572,7 +639,7 @@ pub async fn apartments_show(
         }),
         _ => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to load apartment details",
+            "Wohnungsdaten konnten nicht geladen werden.",
         )
             .into_response(),
     }
@@ -593,7 +660,7 @@ pub async fn apartments_update(
             Err(err) => return err.into_response(),
         };
         return render_bad_request(ApartmentsEditTemplate {
-            title: format!("Edit Apartment: {}", apartment.name),
+            title: "Wohnung bearbeiten".to_string(),
             building,
             apartment,
             error: Some(msg),
@@ -609,7 +676,7 @@ pub async fn apartments_update(
         .into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to update apartment",
+            "Wohnung konnte nicht gespeichert werden.",
         )
             .into_response(),
     }
@@ -654,7 +721,7 @@ pub async fn apartments_reorder(
         Err(_) => {
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to load apartments",
+                "Wohnungen konnten nicht geladen werden.",
             )
                 .into_response()
         }
@@ -666,7 +733,7 @@ pub async fn apartments_reorder(
     if current_ids != submitted {
         return (
             axum::http::StatusCode::BAD_REQUEST,
-            "Invalid apartment order",
+            "Ungültige Reihenfolge der Wohnungen",
         )
             .into_response();
     }
@@ -677,7 +744,7 @@ pub async fn apartments_reorder(
     {
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to reorder apartments",
+            "Die Reihenfolge konnte nicht gespeichert werden.",
         )
             .into_response();
     }
@@ -688,11 +755,11 @@ pub async fn apartments_reorder(
         Err(err) => return err.into_response(),
     };
     let apartments = match queries::list_apartments(&pool, &building_id).await {
-        Ok(list) => list,
+        Ok(list) => apartment_rows(list),
         Err(_) => {
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to reload apartments",
+                "Wohnungen konnten nicht neu geladen werden.",
             )
                 .into_response()
         }
@@ -760,7 +827,7 @@ pub async fn ownerships_create(
         Err(_) => {
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to load ownerships",
+                "Eigentümer konnten nicht geladen werden.",
             )
                 .into_response()
         }
@@ -782,7 +849,7 @@ pub async fn ownerships_create(
         .into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to create ownership",
+            "Eigentum konnte nicht angelegt werden.",
         )
             .into_response(),
     }
@@ -803,7 +870,7 @@ pub async fn ownerships_edit(
     match queries::get_ownership(&pool, &ownership_id).await {
         Ok(Some(ownership)) => {
             if ownership.apartment_id != apartment_id {
-                return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response();
+                return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
             }
             let form = OwnershipForm {
                 name: ownership.name.clone(),
@@ -812,7 +879,7 @@ pub async fn ownerships_edit(
                 end_date: ownership.end_date.clone(),
             };
             render(OwnershipsEditTemplate {
-                title: format!("Edit Owner {}", ownership.name),
+                title: "Eigentümer bearbeiten".to_string(),
                 building,
                 apartment,
                 ownership,
@@ -820,10 +887,10 @@ pub async fn ownerships_edit(
                 form,
             })
         }
-        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
+        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to load ownership",
+            "Eigentum konnte nicht geladen werden.",
         )
             .into_response(),
     }
@@ -844,7 +911,7 @@ async fn render_ownership_edit_error(
         Err(err) => return err.into_response(),
     };
     render_bad_request(OwnershipsEditTemplate {
-        title: format!("Edit Owner {}", ownership.name),
+        title: "Eigentümer bearbeiten".to_string(),
         building,
         apartment: apartment.clone(),
         ownership: ownership.clone(),
@@ -866,11 +933,11 @@ pub async fn ownerships_update(
     let ownership = match queries::get_ownership(&pool, &ownership_id).await {
         Ok(Some(existing)) => {
             if existing.apartment_id != apartment_id {
-                return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response();
+                return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
             }
             existing
         }
-        _ => return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
+        _ => return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
     };
 
     let end_opt = normalize_end_date(form.end_date.as_deref());
@@ -903,7 +970,7 @@ pub async fn ownerships_update(
         Err(_) => {
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to load ownerships",
+                "Eigentümer konnten nicht geladen werden.",
             )
                 .into_response()
         }
@@ -925,7 +992,7 @@ pub async fn ownerships_update(
         .into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to update ownership",
+            "Eigentum konnte nicht gespeichert werden.",
         )
             .into_response(),
     }
@@ -942,7 +1009,7 @@ pub async fn ownerships_delete(
     match queries::get_ownership(&pool, &ownership_id).await {
         Ok(Some(existing)) => {
             if existing.apartment_id != apartment_id {
-                return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response();
+                return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
             }
             // Deleting a period between two others would open a hole in the
             // ownership chain and leave weeks without an owner; only the first
@@ -963,9 +1030,8 @@ pub async fn ownerships_delete(
                             &pool,
                             &building_id,
                             &apartment_id,
-                            "This ownership sits between two other ownerships, so deleting it \
-                             would leave weeks without an owner. Move the next ownership earlier \
-                             or the previous one later instead."
+                            "Dieses Eigentum liegt zwischen zwei anderen Eigentümerzeiträumen. \
+                             Es kann nur das erste oder das letzte Eigentum gelöscht werden."
                                 .to_string(),
                             None,
                             None,
@@ -976,13 +1042,13 @@ pub async fn ownerships_delete(
                 Err(_) => {
                     return (
                         axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        "Failed to load ownerships",
+                        "Eigentümer konnten nicht geladen werden.",
                     )
                         .into_response()
                 }
             }
         }
-        _ => return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
+        _ => return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
     }
 
     let _ = queries::delete_ownership(&pool, &ownership_id).await;
@@ -1050,7 +1116,9 @@ pub async fn tenancies_create(
                     &pool,
                     &building_id,
                     &apartment_id,
-                    "Tenancy overlaps an existing tenancy of this apartment".to_string(),
+                    "Das Mietverhältnis überschneidet ein bestehendes Mietverhältnis \
+                     dieser Wohnung."
+                        .to_string(),
                     None,
                     Some(form),
                 )
@@ -1060,7 +1128,7 @@ pub async fn tenancies_create(
         Err(_) => {
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to load tenancies",
+                "Mietverhältnisse konnten nicht geladen werden.",
             )
                 .into_response()
         }
@@ -1082,7 +1150,7 @@ pub async fn tenancies_create(
         .into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to create tenancy",
+            "Mietverhältnis konnte nicht angelegt werden.",
         )
             .into_response(),
     }
@@ -1103,7 +1171,7 @@ pub async fn tenancies_edit(
     match queries::get_tenancy(&pool, &tenancy_id).await {
         Ok(Some(tenancy)) => {
             if tenancy.apartment_id != apartment_id {
-                return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response();
+                return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
             }
             let form = TenancyForm {
                 name: tenancy.name.clone(),
@@ -1112,7 +1180,7 @@ pub async fn tenancies_edit(
                 end_date: tenancy.end_date.clone(),
             };
             render(TenanciesEditTemplate {
-                title: format!("Edit Tenant {}", tenancy.name),
+                title: "Mieter bearbeiten".to_string(),
                 building,
                 apartment,
                 tenancy,
@@ -1120,10 +1188,10 @@ pub async fn tenancies_edit(
                 form,
             })
         }
-        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
+        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to load tenancy",
+            "Mietverhältnis konnte nicht geladen werden.",
         )
             .into_response(),
     }
@@ -1193,7 +1261,9 @@ fn ownership_chain_violation(
         .iter()
         .any(|o| overlaps_ownership(o, start, end, None))
     {
-        return Some("Ownership overlaps an existing ownership of this apartment".to_string());
+        return Some(
+            "Das Eigentum überschneidet ein bestehendes Eigentum dieser Wohnung".to_string(),
+        );
     }
 
     // Neighbors as parsed (start, end) pairs; dates are validated on input.
@@ -1219,8 +1289,8 @@ fn ownership_chain_violation(
         let expected = prev_end + chrono::Duration::days(1);
         if start != expected {
             return Some(format!(
-                "Ownership must start on the day after the previous ownership ends ({expected}); \
-                 this would leave {} days without an owner",
+                "Das Eigentum muss am Tag nach dem Ende des vorherigen Eigentums beginnen \
+                 (erwartet: {expected}); so blieben {} Tage ohne Eigentümer",
                 start.signed_duration_since(prev_end).num_days() - 1
             ));
         }
@@ -1236,8 +1306,8 @@ fn ownership_chain_violation(
         let expected = next_start - chrono::Duration::days(1);
         if end != expected {
             return Some(format!(
-                "Ownership must end on the day before the next ownership starts ({expected}); \
-                 this would leave {} days without an owner",
+                "Das Eigentum muss am Tag vor dem Beginn des nächsten Eigentums enden \
+                 (erwartet: {expected}); so blieben {} Tage ohne Eigentümer",
                 next_start.signed_duration_since(end).num_days() - 1
             ));
         }
@@ -1261,7 +1331,7 @@ async fn render_tenancy_edit_error(
         Err(err) => return err.into_response(),
     };
     render_bad_request(TenanciesEditTemplate {
-        title: format!("Edit Tenant {}", tenancy.name),
+        title: "Mieter bearbeiten".to_string(),
         building,
         apartment: apartment.clone(),
         tenancy: tenancy.clone(),
@@ -1283,11 +1353,11 @@ pub async fn tenancies_update(
     let tenancy = match queries::get_tenancy(&pool, &tenancy_id).await {
         Ok(Some(existing)) => {
             if existing.apartment_id != apartment_id {
-                return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response();
+                return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
             }
             existing
         }
-        _ => return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
+        _ => return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
     };
 
     let end_opt = normalize_end_date(form.end_date.as_deref());
@@ -1311,7 +1381,9 @@ pub async fn tenancies_update(
                     &building_id,
                     &apartment,
                     &tenancy,
-                    "Tenancy overlaps an existing tenancy of this apartment".to_string(),
+                    "Das Mietverhältnis überschneidet ein bestehendes Mietverhältnis \
+                     dieser Wohnung."
+                        .to_string(),
                     form,
                 )
                 .await;
@@ -1320,7 +1392,7 @@ pub async fn tenancies_update(
         Err(_) => {
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to load tenancies",
+                "Mietverhältnisse konnten nicht geladen werden.",
             )
                 .into_response()
         }
@@ -1342,7 +1414,7 @@ pub async fn tenancies_update(
         .into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to update tenancy",
+            "Mietverhältnis konnte nicht gespeichert werden.",
         )
             .into_response(),
     }
@@ -1359,10 +1431,10 @@ pub async fn tenancies_delete(
     match queries::get_tenancy(&pool, &tenancy_id).await {
         Ok(Some(existing)) => {
             if existing.apartment_id != apartment_id {
-                return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response();
+                return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
             }
         }
-        _ => return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response(),
+        _ => return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
     }
 
     let _ = queries::delete_tenancy(&pool, &tenancy_id).await;

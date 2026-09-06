@@ -110,7 +110,7 @@ async fn admin_requires_basic_auth() {
     assert_eq!(auth.status(), StatusCode::OK);
     let body = auth.text().await.expect("admin body");
     assert!(
-        body.contains("Buildings"),
+        body.contains("Gebäude"),
         "expected buildings home page, got {body:?}"
     );
 
@@ -121,7 +121,7 @@ async fn admin_requires_basic_auth() {
         .expect("authenticated root request");
     assert_eq!(root.status(), StatusCode::OK);
     assert!(
-        root.text().await.expect("root body").contains("Buildings"),
+        root.text().await.expect("root body").contains("Gebäude"),
         "expected buildings home page at /"
     );
 
@@ -168,8 +168,8 @@ async fn create_building_apartment_owner_tenancy_flow() {
         "public PDF link on detail page"
     );
     assert!(
-        body.contains("Alice &lt;alice@example.com&gt;"),
-        "admin listed"
+        body.contains("mailto:alice@example.com"),
+        "admin listed as contact, got {body:?}"
     );
 
     // Add an apartment.
@@ -419,7 +419,7 @@ async fn schedule_preview_shows_assignments_and_pdf_link() {
     assert_eq!(schedule.status(), StatusCode::OK);
     let body = schedule.text().await.expect("schedule body");
     assert!(
-        body.contains("Schedule Preview"),
+        body.contains("Jahresplan"),
         "schedule heading, got {body:?}"
     );
     // Tenant is delegated from February on; owner before that.
@@ -825,13 +825,13 @@ async fn demo_mode_disables_auth_and_shows_banner() {
     );
     let body = resp.text().await.expect("admin body");
     assert!(
-        body.contains("Buildings"),
+        body.contains("Gebäude"),
         "expected buildings home page, got {body:?}"
     );
 
     // The red demo banner is present on full pages...
     assert!(
-        body.contains("Demo Mode"),
+        body.contains("Demo-Modus"),
         "expected demo banner, got {body:?}"
     );
     assert!(
@@ -839,7 +839,7 @@ async fn demo_mode_disables_auth_and_shows_banner() {
         "banner should carry the demo-banner class"
     );
     assert!(
-        body.contains(r#"<body><div class="demo-banner">Demo Mode</div>"#),
+        body.contains(r#"<body><div class="demo-banner">Demo-Modus</div>"#),
         "banner should be the first element inside <body>"
     );
 
@@ -872,7 +872,7 @@ async fn demo_mode_disables_auth_and_shows_banner() {
             .text()
             .await
             .expect("detail body")
-            .contains("Demo Mode"),
+            .contains("Demo-Modus"),
         "demo banner should appear on the building detail page"
     );
 }

@@ -1,76 +1,39 @@
 {% extends "base.html" %}
 
-{% block title %}{{ title }} · Kehrkraft{% endblock %}
+{% block title %}Kehrkraft: {{ title }}{% endblock %}
 
 {% block content %}
 <nav class="breadcrumb">
-  <a href="/admin">Buildings</a><span class="sep">/</span><span>{{ building.name }}</span>
+  <a href="/admin">Gebäude</a><span class="sep">/</span><span>{{ building.name }}</span>
 </nav>
 
 <div class="page-header">
-  <h1>{{ building.name }}</h1>
-  {% if building.description.len() > 0 %}
-  <p class="subtitle">{{ building.description }}</p>
-  {% endif %}
+  <div>
+    <h1>{{ building.name }}</h1>
+    {% if building.description.len() > 0 %}
+    <p class="subtitle">{{ building.description }}</p>
+    {% endif %}
+    {% if admins.len() > 0 %}
+    <p class="meta-line">
+      Ansprechpartner:{% for a in admins %}{% if !loop.first %},{% endif %} <a href="mailto:{{ a.email }}">{{ a.name }}</a>{% endfor %}
+    </p>
+    {% endif %}
+  </div>
+  <a class="btn btn-secondary" href="/p/{{ building.secret_slug }}/kehrwoche.pdf" target="_blank" rel="noopener">Link für Bewohner</a>
 </div>
 
 <section class="card">
   <div class="card-header">
-    <h2>Apartments</h2>
-    <div class="card-header-actions">
-      <span id="apartment-sort-indicator" class="htmx-indicator reorder-indicator">Saving order&hellip;</span>
-      <a class="btn btn-primary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/new">Add Apartment</a>
-    </div>
-  </div>
-  {% if apartments.len() == 0 %}
-  <p class="muted">No apartments yet.</p>
-  {% else %}
-  <table class="table sortable">
-    <thead>
-      <tr>
-        <th class="col-drag"></th>
-        <th>Name</th>
-        <th>Description</th>
-        <th class="col-actions"></th>
-      </tr>
-    </thead>
-    {% include "admin/apartments/_table_body.html" %}
-  </table>
-  <p class="muted">The order in this list is for display only and does not affect the cleaning rotation, which follows the order the apartments were created.</p>
-  {% endif %}
-</section>
-
-<section class="card">
-  <h2>Public PDF</h2>
-  <p class="muted">Read-only link for residents &mdash; no login required:</p>
-  <p><a href="/p/{{ building.secret_slug }}/kehrwoche.pdf"><code class="code">/p/{{ building.secret_slug }}/kehrwoche.pdf</code></a></p>
-</section>
-
-<section class="card">
-  <h2>Administrators</h2>
-  {% if admins.len() == 0 %}
-  <p class="muted">No administrators.</p>
-  {% else %}
-  <ul class="person-list">
-    {% for a in admins %}
-    <li>{{ a.name }} &lt;{{ a.email }}&gt;</li>
-    {% endfor %}
-  </ul>
-  {% endif %}
-</section>
-
-<section class="card">
-  <div class="card-header">
-    <h2>Schedule &mdash; upcoming weeks</h2>
-    <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/schedule">Full {{ year }} schedule</a>
+    <h2>Kehrwochen-Plan</h2>
+    <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/schedule">Kompletter Jahresplan</a>
   </div>
   {% if schedule.len() == 0 %}
-  <p class="muted">No upcoming weeks this year.</p>
+  <p class="muted">Für dieses Jahr sind keine kommenden Wochen mehr eingeplant.</p>
   {% else %}
   <table class="table table-compact">
     <thead>
       <tr>
-        <th>Woche</th>
+        <th>KW</th>
         <th>von</th>
         <th>bis</th>
         <th>Name</th>
@@ -78,15 +41,15 @@
     </thead>
     <tbody>
     {% for w in schedule %}
-      <tr>
-        <td>{{ w.iso_week }}</td>
+      <tr{% if w.is_current %} class="is-current"{% endif %}>
+        <td class="col-week">{{ w.iso_week }}</td>
         <td>{{ w.start }}</td>
         <td>{{ w.end }}</td>
         <td>
           {% match w.assignee_name %}
             {% when Some with (n) %}
-              {{ n }}{% if w.delegated %} <span class="badge">tenant</span>{% endif %}
-            {% when None %}<span class="badge badge-muted">Unassigned</span>
+              {{ n }}{% if w.delegated %} <span class="badge">Mieter</span>{% endif %}
+            {% when None %}<span class="badge badge-muted">Nicht zugewiesen</span>
           {% endmatch %}
         </td>
       </tr>
@@ -96,12 +59,41 @@
   {% endif %}
 </section>
 
+<section class="card">
+  <div class="card-header">
+    <h2>Wohnungen</h2>
+    <div class="card-header-actions">
+      <span id="apartment-sort-indicator" class="htmx-indicator reorder-indicator">Speichere Reihenfolge …</span>
+      <a class="btn btn-primary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/new">Neue Wohnung</a>
+    </div>
+  </div>
+  {% if apartments.len() == 0 %}
+  <p class="muted">Noch keine Wohnungen.</p>
+  {% else %}
+  <table class="table sortable">
+    <thead>
+      <tr>
+        <th class="col-drag"></th>
+        <th>Name</th>
+        <th>Beschreibung</th>
+        <th class="col-actions"></th>
+      </tr>
+    </thead>
+    {% include "admin/apartments/_table_body.html" %}
+  </table>
+  <p class="muted">Die Reihenfolge in dieser Liste dient nur der Anzeige; die Kehrwoche-Rotation folgt der Anlage-Reihenfolge der Wohnungen (Badge „Rotation“).</p>
+  {% endif %}
+</section>
+
 <section class="card danger-zone">
-  <h2>Danger zone</h2>
+  <div class="card-header">
+    <h2>Gebäude löschen</h2>
+  </div>
+  <p class="muted">Löscht das Gebäude samt aller Wohnungen, Eigentümer und Mietverhältnisse.</p>
   <form method="post" action="/admin/buildings/{{ building.id }}/delete"
         hx-post="/admin/buildings/{{ building.id }}/delete"
-        hx-confirm="Delete this building and all its apartments?">
-    <button type="submit" class="btn btn-danger">Delete Building</button>
+        hx-confirm="Dieses Gebäude samt aller Wohnungen löschen?">
+    <button type="submit" class="btn btn-danger">Gebäude löschen</button>
   </form>
 </section>
 {% endblock %}

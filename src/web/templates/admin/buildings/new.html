@@ -1,44 +1,44 @@
 {% extends "base.html" %}
 
-{% block title %}{{ title }} · Kehrkraft{% endblock %}
+{% block title %}Kehrkraft: {{ title }}{% endblock %}
 
 {% block content %}
 <nav class="breadcrumb">
-  <a href="/admin">Buildings</a><span class="sep">/</span><span>New Building</span>
+  <a href="/admin">Gebäude</a><span class="sep">/</span><span>Neues Gebäude</span>
 </nav>
 
 <div class="page-header">
-  <h1>Create a New Building</h1>
+  <h1>Neues Gebäude anlegen</h1>
 </div>
 
 <div class="card">
   {% include "admin/_error.html" %}
   <form method="post" action="/admin/buildings">
     <label class="field">
-      Name <span class="hint">(max. 30 characters)</span>
+      Name <span class="hint">(max. 30 Zeichen)</span>
       <input type="text" name="name" maxlength="30" value="{{ name }}" required>
     </label>
 
     <label class="field">
-      Description <span class="hint">(optional)</span>
+      Beschreibung <span class="hint">(optional)</span>
       <input type="text" name="description" value="{{ description }}">
     </label>
 
     <fieldset>
-      <legend>Administrator (contact)</legend>
+      <legend>Ansprechpartner (Administrator)</legend>
       <label class="field">
         Name
         <input type="text" name="admin_name" value="{{ admin_name }}" required>
       </label>
       <label class="field">
-        Email
+        E-Mail
         <input type="email" name="admin_email" value="{{ admin_email }}" required>
       </label>
     </fieldset>
 
     <div class="form-actions">
-      <button type="submit" class="btn btn-primary">Create Building</button>
-      <a class="btn btn-secondary" href="/admin">Cancel</a>
+      <button type="submit" class="btn btn-primary">Gebäude anlegen</button>
+      <a class="btn btn-secondary" href="/admin">Abbrechen</a>
     </div>
   </form>
 </div>

@@ -1,15 +1,15 @@
 {% extends "base.html" %}
 
-{% block title %}{{ title }} · Kehrkraft{% endblock %}
+{% block title %}Kehrkraft: {{ title }}{% endblock %}
 
 {% block content %}
 <nav class="breadcrumb">
-  <a href="/admin">Buildings</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">{{ apartment.name }}</a><span class="sep">/</span><span>Tenant: {{ tenancy.name }}</span>
+  <a href="/admin">Gebäude</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">{{ apartment.name }}</a><span class="sep">/</span><span>Mieter: {{ tenancy.name }}</span>
 </nav>
 
 <div class="page-header">
-  <h1>Edit Tenant: {{ tenancy.name }}</h1>
-  <p class="subtitle">Apartment {{ apartment.name }} ({{ building.name }})</p>
+  <h1>Mieter bearbeiten: {{ tenancy.name }}</h1>
+  <p class="subtitle">Wohnung {{ apartment.name }} ({{ building.name }})</p>
 </div>
 
 <div class="card">
@@ -21,23 +21,23 @@
     </label>
 
     <label class="field">
-      Email
+      E-Mail
       <input type="email" name="email" value="{{ form.email }}" required />
     </label>
 
     <label class="field">
-      Tenancy Start Date
+      Mietbeginn
       <input type="date" name="start_date" value="{{ form.start_date }}" required />
     </label>
 
     <label class="field">
-      Tenancy End Date <span class="hint">(optional)</span>
+      Mietende <span class="hint">(optional)</span>
       <input type="date" name="end_date" value="{% if let Some(ed) = form.end_date %}{{ ed }}{% endif %}" />
     </label>
 
     <div class="form-actions">
-      <button type="submit" class="btn btn-primary">Save Changes</button>
-      <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">Cancel</a>
+      <button type="submit" class="btn btn-primary">Änderungen speichern</button>
+      <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">Abbrechen</a>
     </div>
   </form>
 </div>

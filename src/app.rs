@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 use axum::body::Body;
+use axum::extract::Path;
 use axum::extract::State;
 use axum::http::header;
 use axum::http::{HeaderValue, Request, StatusCode};
@@ -26,6 +27,11 @@ const KEHRKRAFT_SVG: &[u8] = include_bytes!("../kehrkraft.svg");
 const APP_CSS: &[u8] = include_bytes!("web/static/app.css");
 const HTMX_JS: &[u8] = include_bytes!("web/static/htmx.min.js");
 const SORTABLE_JS: &[u8] = include_bytes!("web/static/sortable.min.js");
+const BARLOW_400: &[u8] = include_bytes!("web/static/barlow-400.woff2");
+const BARLOW_500: &[u8] = include_bytes!("web/static/barlow-500.woff2");
+const BARLOW_600: &[u8] = include_bytes!("web/static/barlow-600.woff2");
+const BARLOW_700: &[u8] = include_bytes!("web/static/barlow-700.woff2");
+const BARLOW_CONDENSED_600: &[u8] = include_bytes!("web/static/barlow-condensed-600.woff2");
 
 async fn healthz() -> &'static str {
     "ok"
@@ -69,6 +75,27 @@ async fn sortable_js() -> impl IntoResponse {
         ],
         SORTABLE_JS,
     )
+}
+
+/// Bundled Barlow webfonts (OFL), embedded like the other static assets so the
+/// app stays self-contained and works offline.
+async fn font(Path(name): Path<String>) -> Response {
+    let (bytes, content_type): (&[u8], &'static str) = match name.as_str() {
+        "barlow-400.woff2" => (BARLOW_400, "font/woff2"),
+        "barlow-500.woff2" => (BARLOW_500, "font/woff2"),
+        "barlow-600.woff2" => (BARLOW_600, "font/woff2"),
+        "barlow-700.woff2" => (BARLOW_700, "font/woff2"),
+        "barlow-condensed-600.woff2" => (BARLOW_CONDENSED_600, "font/woff2"),
+        _ => return (StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+    };
+    (
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        bytes,
+    )
+        .into_response()
 }
 
 /// Basic Auth gate for the admin area; returns 401 + WWW-Authenticate on failure.
@@ -175,7 +202,7 @@ async fn rate_limit(req: Request<Body>, next: Next) -> Response {
 }
 
 /// Markup injected at the top of every full HTML page in demo mode.
-const DEMO_BANNER_HTML: &[u8] = b"<div class=\"demo-banner\">Demo Mode</div>";
+const DEMO_BANNER_HTML: &[u8] = b"<div class=\"demo-banner\">Demo-Modus</div>";
 
 /// Inserts [DEMO_BANNER_HTML] right after the opening `<body>` tag, or returns
 /// the body unchanged if no `<body>` tag is present.
@@ -350,6 +377,7 @@ pub fn build_router(
         .route("/static/app.css", get(app_css))
         .route("/static/htmx.min.js", get(htmx_js))
         .route("/static/sortable.min.js", get(sortable_js))
+        .route("/static/{font}", get(font))
         .layer(middleware::from_fn(security_headers))
         .layer(tower_http::limit::RequestBodyLimitLayer::new(1_000_000))
         .layer(tower_http::compression::CompressionLayer::new())

@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 
-{% block title %}{{ title }} · Kehrkraft{% endblock %}
+{% block title %}Kehrkraft: {{ title }}{% endblock %}
 
 {% block content %}
 <nav class="breadcrumb">
-  <a href="/admin">Buildings</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><span>{{ apartment.name }}</span>
+  <a href="/admin">Gebäude</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><span>{{ apartment.name }}</span>
 </nav>
 
 <div class="page-header">
@@ -14,22 +14,22 @@
     <p class="subtitle">{{ apartment.description }}</p>
     {% endif %}
   </div>
-  <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/edit">Edit Apartment</a>
+  <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/edit">Wohnung bearbeiten</a>
 </div>
 
 <section class="card">
-  <h2>Owners</h2>
+  <h2>Eigentümer</h2>
   {% if ownerships.len() == 0 %}
-  <p class="muted">No owners recorded.</p>
+  <p class="muted">Keine Eigentümer erfasst.</p>
   {% else %}
   <table class="table">
     <thead>
       <tr>
         <th>Name</th>
-        <th>Email</th>
-        <th>Start Date</th>
-        <th>End Date</th>
-        <th class="col-actions">Actions</th>
+        <th>E-Mail</th>
+        <th>Beginn</th>
+        <th>Ende</th>
+        <th class="col-actions"></th>
       </tr>
     </thead>
     <tbody>
@@ -40,11 +40,11 @@
         <td>{{ o.start_date }}</td>
         <td>{% if o.end_date.is_some() %}{{ o.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
         <td class="col-actions">
-          <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ o.id }}/edit">Edit</a>
+          <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ o.id }}/edit">Bearbeiten</a>
           <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ o.id }}/delete"
                 hx-post="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ o.id }}/delete"
-                hx-confirm="Delete this ownership?">
-            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                hx-confirm="Dieses Eigentum löschen?">
+            <button type="submit" class="btn btn-danger btn-sm">Löschen</button>
           </form>
         </td>
       </tr>
@@ -54,7 +54,7 @@
   {% endif %}
 
   <details class="disclosure" {% if owner_form.is_some() %}open{% endif %}>
-    <summary>Add Owner</summary>
+    <summary>Eigentümer hinzufügen</summary>
     {% if owner_form.is_some() %}{% include "admin/_error.html" %}{% endif %}
     <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships">
       <label class="field">
@@ -62,38 +62,38 @@
         <input type="text" name="name" value="{% if let Some(f) = owner_form %}{{ f.name }}{% endif %}" required />
       </label>
       <label class="field">
-        Email
+        E-Mail
         <input type="email" name="email" value="{% if let Some(f) = owner_form %}{{ f.email }}{% endif %}" required />
       </label>
       <label class="field">
-        Ownership Start Date
+        Eigentum ab
         <input type="date" name="start_date" value="{% if let Some(f) = owner_form %}{{ f.start_date }}{% endif %}" required />
       </label>
       <label class="field">
-        Ownership End Date <span class="hint">(optional)</span>
+        Eigentum bis <span class="hint">(optional)</span>
         <input type="date" name="end_date" value="{% if let Some(f) = owner_form %}{% if let Some(ed) = f.end_date %}{{ ed }}{% endif %}{% endif %}" />
       </label>
       <div class="form-actions">
-        <button type="submit" class="btn btn-primary">Add Owner</button>
+        <button type="submit" class="btn btn-primary">Eigentümer hinzufügen</button>
       </div>
     </form>
   </details>
 </section>
 
 <section class="card">
-  <h2>Tenants</h2>
-  <p class="muted"><em>When a tenancy is active for a week, the Kehrwoche duty is delegated to the tenant. Overlapping tenancies are rejected.</em></p>
+  <h2>Mieter</h2>
+  <p class="muted"><em>Besteht während einer Woche ein Mietverhältnis, wird die Kehrwoche an den Mieter delegiert. Überlappende Mietverhältnisse lehnt die Anwendung ab.</em></p>
   {% if tenancies.len() == 0 %}
-  <p class="muted">No tenancies recorded.</p>
+  <p class="muted">Keine Mietverhältnisse erfasst.</p>
   {% else %}
   <table class="table">
     <thead>
       <tr>
         <th>Name</th>
-        <th>Email</th>
-        <th>Start Date</th>
-        <th>End Date</th>
-        <th class="col-actions">Actions</th>
+        <th>E-Mail</th>
+        <th>Beginn</th>
+        <th>Ende</th>
+        <th class="col-actions"></th>
       </tr>
     </thead>
     <tbody>
@@ -104,11 +104,11 @@
         <td>{{ t.start_date }}</td>
         <td>{% if t.end_date.is_some() %}{{ t.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
         <td class="col-actions">
-          <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ t.id }}/edit">Edit</a>
+          <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ t.id }}/edit">Bearbeiten</a>
           <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ t.id }}/delete"
                 hx-post="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ t.id }}/delete"
-                hx-confirm="Delete this tenancy?">
-            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                hx-confirm="Dieses Mietverhältnis löschen?">
+            <button type="submit" class="btn btn-danger btn-sm">Löschen</button>
           </form>
         </td>
       </tr>
@@ -118,7 +118,7 @@
   {% endif %}
 
   <details class="disclosure" {% if tenant_form.is_some() %}open{% endif %}>
-    <summary>Add Tenant</summary>
+    <summary>Mieter hinzufügen</summary>
     {% if tenant_form.is_some() %}{% include "admin/_error.html" %}{% endif %}
     <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies">
       <label class="field">
@@ -126,19 +126,19 @@
         <input type="text" name="name" value="{% if let Some(f) = tenant_form %}{{ f.name }}{% endif %}" required />
       </label>
       <label class="field">
-        Email
+        E-Mail
         <input type="email" name="email" value="{% if let Some(f) = tenant_form %}{{ f.email }}{% endif %}" required />
       </label>
       <label class="field">
-        Tenancy Start Date
+        Mietbeginn
         <input type="date" name="start_date" value="{% if let Some(f) = tenant_form %}{{ f.start_date }}{% endif %}" required />
       </label>
       <label class="field">
-        Tenancy End Date <span class="hint">(optional)</span>
+        Mietende <span class="hint">(optional)</span>
         <input type="date" name="end_date" value="{% if let Some(f) = tenant_form %}{% if let Some(ed) = f.end_date %}{{ ed }}{% endif %}{% endif %}" />
       </label>
       <div class="form-actions">
-        <button type="submit" class="btn btn-primary">Add Tenant</button>
+        <button type="submit" class="btn btn-primary">Mieter hinzufügen</button>
       </div>
     </form>
   </details>

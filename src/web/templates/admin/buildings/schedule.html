@@ -1,26 +1,30 @@
 {% extends "base.html" %}
 
-{% block title %}{{ title }} · Kehrkraft{% endblock %}
+{% block title %}Kehrkraft: {{ title }}{% endblock %}
 
 {% block content %}
 <nav class="breadcrumb">
-  <a href="/admin">Buildings</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><span>Schedule</span>
+  <a href="/admin">Gebäude</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><span>Jahresplan</span>
 </nav>
 
 <div class="page-header">
-  <h1>Schedule Preview: {{ building.name }} ({{ year }})</h1>
+  <div>
+    <h1>Jahresplan</h1>
+    <p class="subtitle">{{ building.name }}</p>
+  </div>
+  <div class="year-hero" aria-hidden="true">{{ year }}</div>
 </div>
 
 <section class="card">
   <p class="muted">
-    Public PDF:
+    PDF für Bewohner:
     <a href="/p/{{ building.secret_slug }}/kehrwoche.pdf"><code class="code">/p/{{ building.secret_slug }}/kehrwoche.pdf</code></a>
   </p>
 
   <table class="table table-compact">
     <thead>
       <tr>
-        <th>Woche</th>
+        <th>KW</th>
         <th>von</th>
         <th>bis</th>
         <th>Name</th>
@@ -28,15 +32,15 @@
     </thead>
     <tbody>
     {% for w in schedule %}
-      <tr>
-        <td>{{ w.iso_week }}</td>
+      <tr{% if w.is_current %} class="is-current"{% endif %}>
+        <td class="col-week">{{ w.iso_week }}</td>
         <td>{{ w.start }}</td>
         <td>{{ w.end }}</td>
         <td>
           {% match w.assignee_name %}
             {% when Some with (n) %}
-              {{ n }}{% if w.delegated %} <span class="badge">tenant</span>{% endif %}
-            {% when None %}<span class="badge badge-muted">Unassigned</span>
+              {{ n }}{% if w.delegated %} <span class="badge">Mieter</span>{% endif %}
+            {% when None %}<span class="badge badge-muted">Nicht zugewiesen</span>
           {% endmatch %}
         </td>
       </tr>
@@ -45,5 +49,5 @@
   </table>
 </section>
 
-<p><a href="/admin/buildings/{{ building.id }}">Back to Building</a></p>
+<p><a href="/admin/buildings/{{ building.id }}">Zurück zum Gebäude</a></p>
 {% endblock %}

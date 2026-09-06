@@ -1,4 +1,4 @@
--- Demo fixture: the "Treehouse" building.
+-- Demo fixture: the "Baumhaus" (treehouse) building.
 --
 -- Idempotent: on re-run it first deletes the demo rows (children first),
 -- then recreates them. Other data is left untouched.
@@ -16,22 +16,23 @@ DELETE FROM buildings WHERE id = 'building-treehouse';
 
 -- Building with its administrator (contact): Bart Simpson
 INSERT INTO buildings (id, name, description, secret_slug)
-VALUES ('building-treehouse', 'Treehouse', '', 'LIwSIy5r0G4lSdwQwZbZbK');
+VALUES ('building-treehouse', 'Baumhaus', 'Barts Baumhaus hinter der 742 Evergreen Terrace – mit Klimaanlage und Aussicht auf Springfield.', 'LIwSIy5r0G4lSdwQwZbZbK');
 
 INSERT INTO building_administrators (id, building_id, name, email)
 VALUES ('admin-bart', 'building-treehouse', 'Bart Simpson', 'bart.simpson@example.com');
 
--- Apartments in their manual order (position 1-4: B, G, F, R), each with an
--- open-ended ownership starting 2026-01-01. The cleaning rotation follows the
--- order the apartments were created (all inserted in one statement, so the
--- deterministic tie-break is the id): B, F, G, R. The roof floor is rented to
--- Bart Simpson, so the scheduler delegates roof duty to him.
+-- Apartments in their manual order (position 1-4, top floor first: Dach,
+-- 1. Stock, Erdgeschoß, Souterrain), each with an open-ended ownership
+-- starting 2026-01-01. The cleaning rotation follows the order the apartments
+-- were created (all inserted in one statement, so the deterministic tie-break
+-- is the id): basement, first, ground, roof. The roof floor is rented to Bart
+-- Simpson, so the scheduler delegates roof duty to him.
 INSERT INTO apartments (id, building_id, name, description, position)
 VALUES
-    ('apartment-basement', 'building-treehouse', 'B', 'Basement',     4),
-    ('apartment-ground',   'building-treehouse', 'G', 'Ground Floor', 3),
-    ('apartment-first',    'building-treehouse', 'F', 'First Floor',  2),
-    ('apartment-roof',     'building-treehouse', 'R', 'Roof Floor',   1);
+    ('apartment-basement', 'building-treehouse', 'Souterrain',    'Willies Souterrain-Refugium: Rasenmäher direkt vor der Tür, Dudelsack erst nach Feierabend.', 4),
+    ('apartment-ground',   'building-treehouse', 'Erdgeschoß',    'Homers Parterre: Couch vor dem Fernseher und Donut-Duft im Treppenhaus.',                      3),
+    ('apartment-first',    'building-treehouse', '1. Stock',      'Frau Krabappels Rückzugsort: hellhörig, aber leise – jede Störung wird mit einem „Ha!“ quittiert.', 2),
+    ('apartment-roof',     'building-treehouse', 'Dachgeschoss',  'Barts Zimmer unterm Dach: Skateboard-Stellplatz, Klimaanlage und freie Sicht aufs ganze Viertel.', 1);
 
 INSERT INTO ownerships (id, apartment_id, name, email, start_date)
 VALUES

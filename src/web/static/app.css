@@ -1,21 +1,63 @@
-/* Kehrkraft admin UI — hand-rolled stylesheet, no framework. */
+/* Kehrkraft admin UI — hand-rolled stylesheet, no framework.
+   Type: Barlow (OFL), bundled as woff2 and served from /static. */
+
+@font-face {
+  font-family: "Barlow";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/static/barlow-400.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Barlow";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/static/barlow-500.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Barlow";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/static/barlow-600.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Barlow";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/static/barlow-700.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/static/barlow-condensed-600.woff2") format("woff2");
+}
 
 :root {
-  --bg: #f3f5f7;
+  --bg: #eff1f2;
   --surface: #ffffff;
-  --border: #e2e8f0;
-  --border-strong: #cbd5e1;
-  --text: #1c2733;
-  --text-muted: #64748b;
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
-  --accent-soft: #eaf1fe;
-  --danger: #d92d20;
-  --danger-soft: #fef3f2;
-  --danger-border: #f2c1bd;
+  --border: #dfe3e5;
+  --border-strong: #c6ccd1;
+  --text: #26292c;
+  --text-muted: #5c646b;
+  --accent: #2e5e7e;
+  --accent-hover: #254b64;
+  --accent-soft: #e4ecf1;
+  --danger: #c93c2c;
+  --danger-soft: #fbf1ef;
+  --danger-border: #ecc4bd;
   --radius: 10px;
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.08);
-  --content-width: 1060px;
+  /* Fluid up to 1400px; below that the page keeps modest side gutters. */
+  --content-width: min(1400px, calc(100% - 3rem));
 }
 
 * {
@@ -26,7 +68,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+  font-family: "Barlow", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
   font-size: 15px;
   line-height: 1.55;
@@ -34,8 +76,9 @@ body {
 }
 
 h1 {
-  font-size: 1.45rem;
-  line-height: 1.25;
+  font-size: 1.7rem;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
   margin: 0;
 }
 
@@ -115,10 +158,8 @@ a {
   background: var(--danger);
   color: #fff;
   text-align: center;
-  font-weight: 600;
+  font-weight: 500;
   font-size: 0.85rem;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   padding: 0.45rem 1rem;
 }
 
@@ -218,13 +259,16 @@ a {
 
 .table th {
   text-align: left;
-  font-size: 0.72rem;
+  font-size: 0.82rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--text-muted);
   padding: 0.4rem 0.6rem;
   border-bottom: 1px solid var(--border);
+}
+
+.table th,
+.table td {
+  font-variant-numeric: tabular-nums;
 }
 
 .table td {
@@ -521,4 +565,100 @@ details.disclosure form {
   font-size: 0.85rem;
   font-weight: 500;
   color: var(--accent);
+}
+
+/* ---------- Roster ---------- */
+
+.col-week {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The roster's columns keep fixed shares: narrow date columns, and the
+   assignee column bounded instead of absorbing every extra pixel (which
+   would leave a large void after the names on wide screens). */
+.table-compact {
+  table-layout: fixed;
+}
+
+.table-compact th:first-child {
+  width: 3rem;
+}
+
+.table-compact th:nth-child(2),
+.table-compact th:nth-child(3) {
+  width: 7.5rem;
+}
+
+.table-compact th:last-child,
+.table-compact td:last-child {
+  width: 45%;
+}
+
+/* Exactly one week is marked: the one currently running. */
+tr.is-current td {
+  background: var(--accent-soft);
+}
+
+tr.is-current td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* ---------- Building page ---------- */
+
+.meta-line {
+  margin: 0.4rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.meta-line a {
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.meta-line a:hover {
+  color: var(--accent);
+}
+
+/* The year as the schedule page's single display numeral. */
+.year-hero {
+  font-family: "Barlow Condensed", "Barlow", sans-serif;
+  font-weight: 600;
+  font-size: 3.4rem;
+  line-height: 1;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Floor stack: the apartment name keeps company with a small "house number"
+   plate and its position in the cleaning rotation. */
+.floor-plate {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9em;
+  height: 1.9em;
+  margin-right: 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  font-weight: 700;
+  font-size: 0.95em;
+  vertical-align: middle;
+}
+
+.floor-plate + .link-strong {
+  margin-right: 0.5rem;
+}
+
+/* On screens with room to spare, the floor-stack name column keeps a width
+   that fits name + rotation badge on one line; on smaller screens the cell
+   is free to wrap. */
+@media (min-width: 900px) {
+  .table.sortable th:nth-child(2),
+  .table.sortable td:nth-child(2) {
+    min-width: 21rem;
+  }
 }
