@@ -21,7 +21,7 @@ use axum::Router;
 use base64::Engine as _;
 
 use crate::db::Db;
-use crate::web::{admin, pdf};
+use crate::web::{admin, ical, pdf};
 
 /// Shared application state handed to handlers via [`axum::extract::State`].
 /// Handlers only request the slices they need via `FromRef`.
@@ -379,6 +379,7 @@ pub fn build_router(
 
     let public_router = Router::new()
         .route("/p/{secret_slug}/kehrwoche.pdf", get(pdf::public_pdf))
+        .route("/p/{secret_slug}/kehrwoche.ics", get(ical::public_ical))
         .route_layer(middleware::from_fn(rate_limit));
 
     let admin_router = if demo_mode {

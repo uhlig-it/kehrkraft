@@ -2,12 +2,14 @@
 //
 // Layout: title with the logo floating in the top-right corner (independent
 // of the document flow), the year's weeks split into two balanced columns,
-// and a QR band at the bottom (current PDF link + a reserved slot for a
-// future QR code). Rows from the previous/next year that only exist to
-// balance the columns are greyed out and marked `info`.
+// and a QR band at the bottom with QR codes for the PDF itself and the iCal
+// feed (rendered only when a public URL is configured; otherwise a reserved
+// box stands in for each). Rows from the previous/next year that only exist
+// to balance the columns are greyed out and marked `info`.
 //
-// The wrapper (see pdf.rs) writes logo.svg / qr.svg next to this file and
-// passes the left/right row arrays plus the absolute PDF link.
+// The wrapper (see pdf.rs) writes logo.svg / qr.svg / qr_ical.svg next to
+// this file and passes the left/right row arrays plus the absolute PDF and
+// iCal links.
 
 #let schedule_table(rows) = table(
   table.header([*W*], [*von*], [*bis*], [*Name*]),
@@ -29,7 +31,7 @@
   radius: 4pt,
 )
 
-#let kehrwoche(building_name: str, year: int, left_rows: array, right_rows: array, pdf_url: str) = [
+#let kehrwoche(building_name: str, year: int, left_rows: array, right_rows: array, pdf_url: str, ical_url: str) = [
   // Logo floats in the top-right corner, independent of the document flow
   // (so its size never pushes the schedule down). dy lifts it into the top
   // margin so it stays clear of the table header.
@@ -69,11 +71,16 @@
       ]
     ],
     [
-      // Reserved space for a second QR code that will be added later.
+      // QR code for the iCal feed so residents can subscribe to the
+      // calendar directly from the printed plan.
       #align(center)[
-        #reserved_box
+        #if ical_url.len() > 0 {
+          [#image("qr_ical.svg", width: 2.35cm)]
+        } else {
+          [#reserved_box]
+        }
         #v(2pt)
-        #text(7.5pt, fill: luma(120))[Platz für weiteren QR-Code]
+        #text(7.5pt, fill: luma(120))[Kalender-Feed per QR abonnieren]
       ]
     ],
   )

@@ -2,12 +2,11 @@
 
 # Overview
 
-Kehrkraft is a web application for managing who is responsible for Kehrwoche (stairwell cleaning) in a building of (rented) apartments. A unique, somewhat secret URL serves a PDF for the current year, so that no login is required for viewing the plan.
+Kehrkraft is a web application for managing who is responsible for Kehrwoche (stairwell cleaning) in a building of (rented) apartments. A unique, somewhat secret URL serves a PDF for the current year and an iCal feed for calendar subscriptions, so that no login is required for viewing the plan.
 
 # TODO
 
-* iCal feed for a plan
-* List people and their roles (admin, owner, tenant) and link to their objects
+* Create a dedicated page that lists people and their roles (admin, owner, tenant) and link to their objects. Whenever a person occurs in some role on the site, link to the person's page.
 * Hourly database backup to S3 with retention (port sqlite-vault to sqlite-vault-rs)
 * Internationalization: Keep strings ready for EN/DE; "Kehrwoche" as canonical term. Collect all strings that need translation and suggest German alternatives, so that we can support both languages
 * Remove `rotation_seed` if really unused
@@ -73,7 +72,7 @@ This runs:
 
 - Unit tests: DB `queries` and migrations, including the validation rules the database enforces via triggers (names, e-mail, date formats, ownership chain tiling, tenancy overlap, „every apartment has an owner“); scheduler.
 - A PDF integration test that boots the real router, creates a building, and fetches `/p/{slug}/kehrwoche.pdf` over HTTP, asserting the body is a non-empty PDF.
-- End-to-end tests (`tests/e2e/`) that drive the full app over HTTP: Basic Auth (401 without; buildings home page with), create building + apartment (with its first owner) + owner + tenancy (including rejection of overlapping tenancies and ownerships), drag reorder of apartments, schedule preview, and the public PDF fetch.
+- End-to-end tests (`tests/e2e/`) that drive the full app over HTTP: Basic Auth (401 without; buildings home page with), create building + apartment (with its first owner) + owner + tenancy (including rejection of overlapping tenancies and ownerships), drag reorder of apartments, schedule preview, and the public PDF/ iCal feed fetches.
 
 Typst is required only for the two PDF tests; those skip automatically when the `typst` binary is missing. Install it via `brew install typst`, or see https://github.com/typst/typst for other platforms. The CI workflow installs Typst as well.
 
@@ -98,6 +97,7 @@ $ sqlite3 kehrkraft.db < fixtures/demo.sql
 - Admin pages use a hand-rolled stylesheet (`/static/app.css`, embedded into the binary); no CSS framework.
 - Admin authentication uses HTTP Basic Auth (credentials from environment variables).
 - PDF rendering is done via Typst.
+- The iCal feed (`/p/{slug}/kehrwoche.ics`) is generated in Rust without extra dependencies (RFC 5545, all-day events).
 - The app listens on plain HTTP; port is read from env var PORT, otherwise binds to an OS-assigned ephemeral port (>1024).
 - Testing includes unit tests, HTTP-level end-to-end tests, and a PDF integration test, each using a fresh in-memory SQLite database.
 
