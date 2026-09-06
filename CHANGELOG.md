@@ -12,6 +12,8 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- [**breaking**] Validation moved into the database (migration 0004): names, e-mail format, date format and ordering, ownership-chain tiling, tenancy overlap, and the reorder set-check are now enforced by triggers/constraints; the web layer shows the database's German rejection messages inline instead of re-implementing the rules.
+- [**breaking**] An apartment always has an ownership record: it is created together with its first owner (the new-apartment form collects the initial owner), and deleting the last ownership of an apartment is impossible; only the first or the last ownership of a chain may be deleted.
 - [**breaking**] The rotation is now anchored to apartments (in the order they were created) instead of ownership records, with a continuous counter across years, so that owner or tenant changes mid-year no longer shift the duty weeks of other apartments, and the +1 imbalance of years with 53 ISO weeks rotates between the apartments instead of always hitting the same ones.
 - [**breaking**] Ownership periods of an apartment must now tile its timeline seamlessly (the next ownership starts on the day after the previous one ends; enforced on create/update/delete). Transition weeks between two ownerships are assigned to the owner covering most of the week, so there are no more unassigned weeks.
 - The apartment order in the admin list is now explicitly display-only (note added); it never influences scheduling.

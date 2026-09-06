@@ -6,8 +6,6 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 
 # TODO
 
-* Move validation to the db layer as much as sensible, and keep it in the web layer only if it's not reasonably possible to do in the db layer. Make it impossible for an apartment to have no ownership record
-* Make it impossible for an apartment to have no ownership record
 * iCal feed for a plan
 * List people and their roles (admin, owner, tenant) and link to their objects
 * Hourly database backup to S3 with retention (port sqlite-vault to sqlite-vault-rs)
@@ -73,9 +71,9 @@ $ cargo test
 
 This runs:
 
-- Unit tests (DB `queries`, migrations, scheduler, validation).
+- Unit tests: DB `queries` and migrations, including the validation rules the database enforces via triggers (names, e-mail, date formats, ownership chain tiling, tenancy overlap, „every apartment has an owner“); scheduler.
 - A PDF integration test that boots the real router, creates a building, and fetches `/p/{slug}/kehrwoche.pdf` over HTTP, asserting the body is a non-empty PDF.
-- End-to-end tests (`tests/e2e/`) that drive the full app over HTTP: Basic Auth (401 without; buildings home page with), create building + apartment + owner + tenancy (including rejection of overlapping tenancies), schedule preview, and the public PDF fetch.
+- End-to-end tests (`tests/e2e/`) that drive the full app over HTTP: Basic Auth (401 without; buildings home page with), create building + apartment (with its first owner) + owner + tenancy (including rejection of overlapping tenancies and ownerships), drag reorder of apartments, schedule preview, and the public PDF fetch.
 
 Typst is required only for the two PDF tests; those skip automatically when the `typst` binary is missing. Install it via `brew install typst`, or see https://github.com/typst/typst for other platforms. The CI workflow installs Typst as well.
 

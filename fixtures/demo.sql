@@ -1,17 +1,22 @@
 -- Demo fixture: the "Baumhaus" (treehouse) building.
 --
--- Idempotent: on re-run it first deletes the demo rows (children first),
--- then recreates them. Other data is left untouched.
+-- Idempotent: on re-run it first deletes the demo rows, then recreates them.
+-- Other data is left untouched.
 --
--- Requires the schema from migrations 0001-0003; the app applies them
+-- Requires the schema from migrations 0001-0004; the app applies them
 -- automatically on startup. See README ("Demo data") for loading steps.
+--
+-- The inserts run in one transaction: the ownerships FK is deferred and the
+-- database requires an ownership row to exist before an apartment can be
+-- inserted (`apartments_require_ownership` trigger), so the ownerships come
+-- first. The deletes go through the building's cascade, which removes the
+-- ownerships together with their apartments (the database protects the last
+-- ownership of an existing apartment from direct deletion).
 
 PRAGMA foreign_keys = ON;
 
-DELETE FROM tenancies WHERE apartment_id IN ('apartment-basement', 'apartment-ground', 'apartment-first', 'apartment-roof');
-DELETE FROM ownerships WHERE apartment_id IN ('apartment-basement', 'apartment-ground', 'apartment-first', 'apartment-roof');
-DELETE FROM apartments WHERE id IN ('apartment-basement', 'apartment-ground', 'apartment-first', 'apartment-roof');
-DELETE FROM building_administrators WHERE building_id = 'building-treehouse';
+BEGIN;
+
 DELETE FROM buildings WHERE id = 'building-treehouse';
 
 -- Building with its administrator (contact): Bart Simpson
@@ -27,13 +32,6 @@ VALUES ('admin-bart', 'building-treehouse', 'Bart Simpson', 'bart.simpson@exampl
 -- were created (all inserted in one statement, so the deterministic tie-break
 -- is the id): basement, first, ground, roof. The roof floor is rented to Bart
 -- Simpson, so the scheduler delegates roof duty to him.
-INSERT INTO apartments (id, building_id, name, description, position)
-VALUES
-    ('apartment-basement', 'building-treehouse', 'Souterrain',    'Willies Souterrain-Refugium: Rasenmäher direkt vor der Tür, Dudelsack erst nach Feierabend.', 4),
-    ('apartment-ground',   'building-treehouse', 'Erdgeschoß',    'Homers Parterre: Couch vor dem Fernseher und Donut-Duft im Treppenhaus.',                      3),
-    ('apartment-first',    'building-treehouse', '1. Stock',      'Frau Krabappels Rückzugsort: hellhörig, aber leise – jede Störung wird mit einem „Ha!“ quittiert.', 2),
-    ('apartment-roof',     'building-treehouse', 'Dachgeschoss',  'Barts Zimmer unterm Dach: Skateboard-Stellplatz, Klimaanlage und freie Sicht aufs ganze Viertel.', 1);
-
 INSERT INTO ownerships (id, apartment_id, name, email, start_date)
 VALUES
     ('ownership-macdougal', 'apartment-basement', 'Dr. William MacDougal III', 'willie.macdougal@example.com', '2026-01-01'),
@@ -41,5 +39,14 @@ VALUES
     ('ownership-krabappel', 'apartment-first',    'Edna Krabappel-Flanders',   'krabby@example.com',           '2026-01-01'),
     ('ownership-burns',     'apartment-roof',     'Charles Montgomery Burns',  'monty@example.com',            '2026-01-01');
 
+INSERT INTO apartments (id, building_id, name, description, position)
+VALUES
+    ('apartment-basement', 'building-treehouse', 'Souterrain',    'Willies Souterrain-Refugium: Rasenmäher direkt vor der Tür, Dudelsack erst nach Feierabend.', 4),
+    ('apartment-ground',   'building-treehouse', 'Erdgeschoß',    'Homers Parterre: Couch vor dem Fernseher und Donut-Duft im Treppenhaus.',                      3),
+    ('apartment-first',    'building-treehouse', '1. Stock',      'Frau Krabappels Rückzugsort: hellhörig, aber leise – jede Störung wird mit einem „Ha!“ quittiert.', 2),
+    ('apartment-roof',     'building-treehouse', 'Dachgeschoss',  'Barts Zimmer unterm Dach: Skateboard-Stellplatz, Klimaanlage und freie Sicht aufs ganze Viertel.', 1);
+
 INSERT INTO tenancies (id, apartment_id, name, email, start_date)
 VALUES ('tenancy-bart-roof', 'apartment-roof', 'Bart Simpson', 'bart.simpson@example.com', '2026-01-01');
+
+COMMIT;

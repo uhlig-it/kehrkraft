@@ -326,10 +326,25 @@ mod tests {
         building_id: &str,
         name: &str,
         created_at: &str,
+        owner_name: &str,
+        owner_start: &str,
+        owner_end: Option<&str>,
     ) -> Apartment {
-        let apartment = queries::create_apartment(pool, building_id, name, "")
-            .await
-            .expect("create apartment");
+        let owner_email = format!("{owner_name}@example.com");
+        let apartment = queries::create_apartment(
+            pool,
+            building_id,
+            name,
+            "",
+            &queries::NewOwner {
+                name: owner_name,
+                email: &owner_email,
+                start_date: owner_start,
+                end_date: owner_end,
+            },
+        )
+        .await
+        .expect("create apartment");
         // Fix the creation timestamp so the rotation order is deterministic.
         sqlx::query("UPDATE apartments SET created_at = ? WHERE id = ?")
             .bind(created_at)
@@ -370,8 +385,16 @@ mod tests {
     async fn single_owner_entire_year() {
         let (pool, building_id) = setup().await;
         let year = 2024;
-        let apt = add_apartment(&pool, &building_id, "Apartment 1", "2024-01-01 00:00:00").await;
-        add_owner(&pool, &apt.id, "Alice", &format!("{year}-01-01"), None).await;
+        let _apt = add_apartment(
+            &pool,
+            &building_id,
+            "Apartment 1",
+            "2024-01-01 00:00:00",
+            "Alice",
+            "2024-01-01",
+            None,
+        )
+        .await;
 
         let schedule = schedule_for_year(&building_id, year, &pool)
             .await
@@ -398,10 +421,26 @@ mod tests {
     async fn round_robin_rotates_between_apartments() {
         let (pool, building_id) = setup().await;
         let year = 2024;
-        let apt1 = add_apartment(&pool, &building_id, "A", "2024-01-01 00:00:00").await;
-        let apt2 = add_apartment(&pool, &building_id, "B", "2024-01-02 00:00:00").await;
-        add_owner(&pool, &apt1.id, "Otto", &format!("{year}-01-01"), None).await;
-        add_owner(&pool, &apt2.id, "Petra", &format!("{year}-01-01"), None).await;
+        let _apt1 = add_apartment(
+            &pool,
+            &building_id,
+            "A",
+            "2024-01-01 00:00:00",
+            "Otto",
+            "2024-01-01",
+            None,
+        )
+        .await;
+        let _apt2 = add_apartment(
+            &pool,
+            &building_id,
+            "B",
+            "2024-01-02 00:00:00",
+            "Petra",
+            "2024-01-01",
+            None,
+        )
+        .await;
 
         let schedule = schedule_for_year(&building_id, year, &pool)
             .await
@@ -430,12 +469,36 @@ mod tests {
     #[tokio::test]
     async fn rotation_continues_across_years() {
         let (pool, building_id) = setup().await;
-        let apt1 = add_apartment(&pool, &building_id, "A", "2024-01-01 00:00:00").await;
-        let apt2 = add_apartment(&pool, &building_id, "B", "2024-01-02 00:00:00").await;
-        let apt3 = add_apartment(&pool, &building_id, "C", "2024-01-03 00:00:00").await;
-        add_owner(&pool, &apt1.id, "Alice", "2024-01-01", None).await;
-        add_owner(&pool, &apt2.id, "Bob", "2024-01-01", None).await;
-        add_owner(&pool, &apt3.id, "Carol", "2024-01-01", None).await;
+        let _apt1 = add_apartment(
+            &pool,
+            &building_id,
+            "A",
+            "2024-01-01 00:00:00",
+            "Alice",
+            "2024-01-01",
+            None,
+        )
+        .await;
+        let _apt2 = add_apartment(
+            &pool,
+            &building_id,
+            "B",
+            "2024-01-02 00:00:00",
+            "Bob",
+            "2024-01-01",
+            None,
+        )
+        .await;
+        let _apt3 = add_apartment(
+            &pool,
+            &building_id,
+            "C",
+            "2024-01-03 00:00:00",
+            "Carol",
+            "2024-01-01",
+            None,
+        )
+        .await;
 
         let s2024 = schedule_for_year(&building_id, 2024, &pool)
             .await
@@ -466,10 +529,26 @@ mod tests {
     async fn owner_handover_mid_year_keeps_apartment_weeks() {
         let (pool, building_id) = setup().await;
         let year = 2024;
-        let apt_a = add_apartment(&pool, &building_id, "A", "2024-01-01 00:00:00").await;
-        let apt_b = add_apartment(&pool, &building_id, "B", "2024-01-02 00:00:00").await;
-        add_owner(&pool, &apt_a.id, "Alice", "2024-01-01", None).await;
-        add_owner(&pool, &apt_b.id, "Bob", "2024-01-01", None).await;
+        let _apt_a = add_apartment(
+            &pool,
+            &building_id,
+            "A",
+            "2024-01-01 00:00:00",
+            "Alice",
+            "2024-01-01",
+            None,
+        )
+        .await;
+        let apt_b = add_apartment(
+            &pool,
+            &building_id,
+            "B",
+            "2024-01-02 00:00:00",
+            "Bob",
+            "2024-01-01",
+            None,
+        )
+        .await;
 
         let before = schedule_for_year(&building_id, year, &pool)
             .await
@@ -545,9 +624,17 @@ mod tests {
     async fn transition_week_goes_to_majority_owner() {
         let (pool, building_id) = setup().await;
         let year = 2024;
-        let apt = add_apartment(&pool, &building_id, "A", "2024-01-01 00:00:00").await;
-        // Alice sells on 2024-03-28 (Thursday); Bernice takes over the next day.
-        add_owner(&pool, &apt.id, "Alice", "2024-01-01", Some("2024-03-28")).await;
+        let apt = add_apartment(
+            &pool,
+            &building_id,
+            "A",
+            "2024-01-01 00:00:00",
+            "Alice",
+            "2024-01-01",
+            Some("2024-03-28"),
+        )
+        .await;
+        // Bernice takes over the next day.
         add_owner(&pool, &apt.id, "Bernice", "2024-03-29", None).await;
 
         let schedule = schedule_for_year(&building_id, year, &pool)
@@ -578,9 +665,16 @@ mod tests {
     async fn first_partially_covered_week_joins_later() {
         let (pool, building_id) = setup().await;
         let year = 2024;
-        let apt = add_apartment(&pool, &building_id, "A", "2024-01-01 00:00:00").await;
-        // Ownership starts 2024-01-05 (Friday): week 1 is only 3 days covered.
-        add_owner(&pool, &apt.id, "Alice", "2024-01-05", None).await;
+        let _apt = add_apartment(
+            &pool,
+            &building_id,
+            "A",
+            "2024-01-01 00:00:00",
+            "Alice",
+            "2024-01-05",
+            None,
+        )
+        .await;
 
         let schedule = schedule_for_year(&building_id, year, &pool)
             .await
@@ -604,8 +698,16 @@ mod tests {
     async fn new_years_week_is_covered() {
         let (pool, building_id) = setup().await;
         let year = 2026;
-        let apt = add_apartment(&pool, &building_id, "A", "2026-01-01 00:00:00").await;
-        add_owner(&pool, &apt.id, "Alice", "2026-01-01", None).await;
+        let _apt = add_apartment(
+            &pool,
+            &building_id,
+            "A",
+            "2026-01-01 00:00:00",
+            "Alice",
+            "2026-01-01",
+            None,
+        )
+        .await;
 
         let schedule = schedule_for_year(&building_id, year, &pool)
             .await
@@ -623,10 +725,18 @@ mod tests {
     async fn tiled_handover_leaves_no_gap() {
         let (pool, building_id) = setup().await;
         let year = 2024;
-        let apt = add_apartment(&pool, &building_id, "A", "2024-01-01 00:00:00").await;
+        let apt = add_apartment(
+            &pool,
+            &building_id,
+            "A",
+            "2024-01-01 00:00:00",
+            "A",
+            "2024-01-01",
+            Some("2024-01-15"),
+        )
+        .await;
 
-        // Owner A owns until mid-January; B takes over the very next day.
-        add_owner(&pool, &apt.id, "A", "2024-01-01", Some("2024-01-15")).await;
+        // B takes over the very next day.
         add_owner(&pool, &apt.id, "B", "2024-01-16", None).await;
 
         let schedule = schedule_for_year(&building_id, year, &pool)
@@ -659,8 +769,16 @@ mod tests {
     async fn active_tenancy_delegates_owner_duty() {
         let (pool, building_id) = setup().await;
         let year = 2024;
-        let apt = add_apartment(&pool, &building_id, "A", "2024-01-01 00:00:00").await;
-        add_owner(&pool, &apt.id, "Otto", &format!("{year}-01-01"), None).await;
+        let apt = add_apartment(
+            &pool,
+            &building_id,
+            "A",
+            "2024-01-01 00:00:00",
+            "Otto",
+            "2024-01-01",
+            None,
+        )
+        .await;
         // Tenancy from mid-February until the end of March
         let t_start = format!("{year}-02-15");
         let t_end = format!("{year}-03-31");
@@ -696,8 +814,16 @@ mod tests {
     async fn tenancy_without_end_delegates_until_year_end() {
         let (pool, building_id) = setup().await;
         let year = 2024;
-        let apt = add_apartment(&pool, &building_id, "A", "2024-01-01 00:00:00").await;
-        add_owner(&pool, &apt.id, "Otto", &format!("{year}-01-01"), None).await;
+        let apt = add_apartment(
+            &pool,
+            &building_id,
+            "A",
+            "2024-01-01 00:00:00",
+            "Otto",
+            "2024-01-01",
+            None,
+        )
+        .await;
         let t_start = format!("{year}-06-01");
         add_tenant(&pool, &apt.id, "Nina", &t_start, None).await;
 
@@ -716,8 +842,16 @@ mod tests {
     async fn tenancy_does_not_start_before_its_begin() {
         let (pool, building_id) = setup().await;
         let year = 2026;
-        let apt = add_apartment(&pool, &building_id, "A", "2026-01-01 00:00:00").await;
-        add_owner(&pool, &apt.id, "Otto", &format!("{year}-01-01"), None).await;
+        let apt = add_apartment(
+            &pool,
+            &building_id,
+            "A",
+            "2026-01-01 00:00:00",
+            "Otto",
+            "2026-01-01",
+            None,
+        )
+        .await;
         // Tenancy begins 2026-02-01 (a Sunday); the week 2026-01-26..2026-02-01
         // must stay with the owner and only the following week be delegated.
         add_tenant(&pool, &apt.id, "Nora", &format!("{year}-02-01"), None).await;

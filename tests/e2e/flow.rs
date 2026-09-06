@@ -42,7 +42,10 @@ async fn create_building(h: &Harness, client: &reqwest::Client, name: &str) -> S
     location.trim_start_matches("/admin/buildings/").to_string()
 }
 
-/// Create an apartment for the building; returns its id.
+/// Create an apartment for the building; returns its id. The form collects
+/// the first owner together with the apartment (a building's apartment must
+/// always have an ownership record); the initial owner period is closed so
+/// tests can add owners starting 2026 and tile the chain.
 async fn create_apartment(
     h: &Harness,
     client: &reqwest::Client,
@@ -53,7 +56,14 @@ async fn create_apartment(
         "{}/admin/buildings/{building_id}/apartments",
         h.base_url
     )))
-    .form(&[("name", name), ("description", "")])
+    .form(&[
+        ("name", name),
+        ("description", ""),
+        ("owner_name", "Ursprünglicher Eigentümer"),
+        ("owner_email", "urspruenglich@example.com"),
+        ("owner_start_date", "2025-01-01"),
+        ("owner_end_date", "2025-12-31"),
+    ])
     .send()
     .await
     .expect("create apartment");
@@ -655,7 +665,13 @@ async fn name_length_limits_are_enforced() {
     let id = create_building(&h, &client, "Musterblock").await;
     let apartment_rejected =
         basic_auth(client.post(format!("{}/admin/buildings/{id}/apartments", h.base_url)))
-            .form(&[("name", too_long.as_str()), ("description", "")])
+            .form(&[
+                ("name", too_long.as_str()),
+                ("description", ""),
+                ("owner_name", "Alice"),
+                ("owner_email", "alice@example.com"),
+                ("owner_start_date", "2026-01-01"),
+            ])
             .send()
             .await
             .expect("create apartment with long name");
@@ -667,7 +683,13 @@ async fn name_length_limits_are_enforced() {
 
     let apartment_accepted =
         basic_auth(client.post(format!("{}/admin/buildings/{id}/apartments", h.base_url)))
-            .form(&[("name", ok_name.as_str()), ("description", "")])
+            .form(&[
+                ("name", ok_name.as_str()),
+                ("description", ""),
+                ("owner_name", "Alice"),
+                ("owner_email", "alice@example.com"),
+                ("owner_start_date", "2026-01-01"),
+            ])
             .send()
             .await
             .expect("create apartment with 30-char name");
