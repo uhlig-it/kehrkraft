@@ -63,6 +63,17 @@ pub fn demo_mode_from_env() -> bool {
     }
 }
 
+/// External base URL of this instance (KEHRKRAFT_PUBLIC_URL), e.g.
+/// `https://kehrkraft.uhlig.it`. Used to build the absolute QR-code link on
+/// the public Kehrwoche PDF. `None` when unset; the PDF is then generated
+/// without a QR code.
+pub fn public_url_from_env() -> Option<String> {
+    env::var("KEHRKRAFT_PUBLIC_URL")
+        .ok()
+        .map(|url| url.trim_end_matches('/').to_string())
+        .filter(|url| !url.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,5 +116,28 @@ mod tests {
         save_dev_port(&path, 20000);
         assert_eq!(saved_dev_port(&path), Some(20000));
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn public_url_trims_trailing_slash() {
+        std::env::set_var("KEHRKRAFT_PUBLIC_URL", "https://kehrkraft.uhlig.it/");
+        assert_eq!(
+            public_url_from_env(),
+            Some("https://kehrkraft.uhlig.it".to_string())
+        );
+        std::env::remove_var("KEHRKRAFT_PUBLIC_URL");
+    }
+
+    #[test]
+    fn missing_public_url_yields_none() {
+        std::env::remove_var("KEHRKRAFT_PUBLIC_URL");
+        assert_eq!(public_url_from_env(), None);
+    }
+
+    #[test]
+    fn empty_public_url_yields_none() {
+        std::env::set_var("KEHRKRAFT_PUBLIC_URL", "");
+        assert_eq!(public_url_from_env(), None);
+        std::env::remove_var("KEHRKRAFT_PUBLIC_URL");
     }
 }

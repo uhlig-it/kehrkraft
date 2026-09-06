@@ -17,6 +17,7 @@ sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio",
 serde = { version = "1", features = ["derive"] }
 rand = "0.9"
 chrono = "0.4"
+fast_qr = { version = "0.14", features = ["svg"] }
 tower-http = { version = "0.6", features = ["trace", "compression-gzip", "limit"] }
 
 [dev-dependencies]

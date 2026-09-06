@@ -9,7 +9,7 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 * Move validation to the db layer as much as sensible, and keep it in the web layer only if it's not reasonably possible to do in the db layer. Make it impossible for an apartment to have no ownership record
 * Make it impossible for an apartment to have no ownership record
 * iCal feed for a plan
-* List people and their roles (admin, owner, tenant) and their objects
+* List people and their roles (admin, owner, tenant) and link to their objects
 * Hourly database backup to S3 with retention (port sqlite-vault to sqlite-vault-rs)
 * Internationalization: Keep strings ready for EN/DE; "Kehrwoche" as canonical term. Collect all strings that need translation and suggest German alternatives, so that we can support both languages
 * Remove `rotation_seed` if really unused
@@ -136,6 +136,7 @@ Environment variables (Kehrkraft's own variables are namespaced with the `KEHRKR
 - KEHRKRAFT_DATABASE_URL: e.g., sqlite:kehrkraft.db; tests use sqlite::memory:
 - KEHRKRAFT_ADMIN_USER, KEHRKRAFT_ADMIN_PASS: Basic Auth credentials for admin (not required when KEHRKRAFT_DEMO_MODE=true)
 - KEHRKRAFT_DEMO_MODE: when true (or 1/yes/on), disables admin authentication and shows a "Demo Mode" banner on every page
+- KEHRKRAFT_PUBLIC_URL: external base URL of the instance (e.g. https://kehrkraft.uhlig.it); printed as the QR code on the Kehrwoche PDF (`{PUBLIC_URL}/p/{slug}/kehrwoche.pdf`). The PDF is rendered without a QR code when unset
 - RUST_LOG: optional logging level
 
 Repository structure (evolves with milestones):

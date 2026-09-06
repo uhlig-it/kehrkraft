@@ -22,6 +22,10 @@ fn typst_available() -> bool {
 /// Start the app on 127.0.0.1 with a random port; returns the base URL.
 /// The returned pool must be kept alive so the in-memory DB persists.
 async fn start_app() -> (String, sqlx::SqlitePool) {
+    start_app_with(None).await
+}
+
+async fn start_app_with(public_url: Option<String>) -> (String, sqlx::SqlitePool) {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -33,6 +37,7 @@ async fn start_app() -> (String, sqlx::SqlitePool) {
         pool.clone(),
         Some(("admin".to_string(), "secret".to_string())),
         false,
+        public_url,
     );
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
@@ -92,6 +97,36 @@ async fn public_pdf_returns_valid_pdf() {
     assert!(
         body.starts_with(b"%PDF-"),
         "expected PDF magic header, got {:?}",
+        &body[..body.len().min(8)]
+    );
+}
+
+#[tokio::test]
+async fn public_pdf_with_public_url_compiles_with_qr_code() {
+    if !typst_available() {
+        eprintln!("typst not installed; skipping PDF response test");
+        return;
+    }
+
+    let base_url = "https://kehrkraft.uhlig.it".to_string();
+    let (app_base, _pool) = start_app_with(Some(base_url)).await;
+
+    let plan = queries::create_building(&_pool, "Test Plan", "", "Alice", "alice@example.com")
+        .await
+        .expect("create building");
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/p/{}/kehrwoche.pdf", app_base, plan.secret_slug))
+        .send()
+        .await
+        .expect("fetch pdf");
+
+    assert_eq!(resp.status(), reqwest::StatusCode::OK, "expected 200");
+    let body = resp.bytes().await.expect("read body");
+    assert!(
+        body.starts_with(b"%PDF-"),
+        "expected PDF with QR code to compile, got {:?}",
         &body[..body.len().min(8)]
     );
 }

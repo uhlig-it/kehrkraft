@@ -109,7 +109,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map_err(|_| "KEHRKRAFT_ADMIN_USER and KEHRKRAFT_ADMIN_PASS must be set")?;
         Some((admin_user, admin_pass))
     };
-    let app = app::build_router(pool, admin_credentials, demo_mode);
+    let public_url = config::public_url_from_env();
+    if public_url.is_none() {
+        tracing::warn!(
+            "KEHRKRAFT_PUBLIC_URL is unset; the Kehrwoche PDF will be generated without a QR code"
+        );
+    }
+    let app = app::build_router(pool, admin_credentials, demo_mode, public_url);
 
     let listener = bind_http_listener().await?;
     let actual_addr = listener.local_addr()?;

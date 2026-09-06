@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 use axum::body::Body;
-use axum::extract::Path;
 use axum::extract::State;
+use axum::extract::{FromRef, Path};
 use axum::http::header;
 use axum::http::{HeaderValue, Request, StatusCode};
 use axum::middleware::{self, Next};
@@ -22,6 +22,27 @@ use base64::Engine as _;
 
 use crate::db::Db;
 use crate::web::{admin, pdf};
+
+/// Shared application state handed to handlers via [`axum::extract::State`].
+/// Handlers only request the slices they need via `FromRef`.
+#[derive(Clone)]
+pub struct AppState {
+    pub pool: Db,
+    /// External base URL of this instance; used for the QR code on the PDF.
+    pub public_url: Option<String>,
+}
+
+impl FromRef<AppState> for Db {
+    fn from_ref(state: &AppState) -> Db {
+        state.pool.clone()
+    }
+}
+
+impl FromRef<AppState> for Option<String> {
+    fn from_ref(state: &AppState) -> Option<String> {
+        state.public_url.clone()
+    }
+}
 
 const KEHRKRAFT_SVG: &[u8] = include_bytes!("../kehrkraft.svg");
 const APP_CSS: &[u8] = include_bytes!("web/static/app.css");
@@ -275,7 +296,9 @@ pub fn build_router(
     pool: Db,
     admin_credentials: Option<(String, String)>,
     demo_mode: bool,
+    public_url: Option<String>,
 ) -> Router {
+    let state = AppState { pool, public_url };
     let admin_router = Router::new()
         .route("/", get(admin::buildings_index))
         .route("/admin", get(admin::buildings_index))
@@ -399,5 +422,5 @@ pub fn build_router(
                 }
             },
         ))
-        .with_state(pool)
+        .with_state(state)
 }

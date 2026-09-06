@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 <!-- git-cliff: end of header -->
 ## [Unreleased]
 
+### Added
+
+- The Kehrwoche PDF now uses both columns equally: the year's weeks are split into two balanced columns, padded with greyed-out weeks from the previous/next year when the year has 53 ISO weeks.
+- The Kehrwoche PDF carries the Kehrkraft logo (placed independently of the page flow, top-right), a QR code linking to the PDF itself, and a reserved slot for a second QR code to be added later. The QR code is printed only when the new `KEHRKRAFT_PUBLIC_URL` environment variable is set.
+
 ### Changed
 
 - [**breaking**] The rotation is now anchored to apartments (in the order they were created) instead of ownership records, with a continuous counter across years, so that owner or tenant changes mid-year no longer shift the duty weeks of other apartments, and the +1 imbalance of years with 53 ISO weeks rotates between the apartments instead of always hitting the same ones.

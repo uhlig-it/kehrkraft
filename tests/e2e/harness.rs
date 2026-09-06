@@ -42,7 +42,7 @@ async fn start_with(admin_credentials: Option<(String, String)>, demo_mode: bool
         .expect("connect in-memory db");
     db::migrate(&pool).await.expect("migrate");
 
-    let app = app::build_router(pool.clone(), admin_credentials, demo_mode);
+    let app = app::build_router(pool.clone(), admin_credentials, demo_mode, None);
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
     let server = tokio::spawn(async move {
