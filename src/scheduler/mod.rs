@@ -463,6 +463,53 @@ mod tests {
         assert!(schedule.iter().all(|w| !w.delegated));
     }
 
+    /// A positive `rotation_seed` shifts the rotation circle: with seed 1 the
+    /// second apartment (creation order) starts the alternation instead of the
+    /// first, moving every duty week one position.
+    #[tokio::test]
+    async fn rotation_seed_shifts_the_rotation() {
+        let (pool, building_id) = setup().await;
+        let year = 2024;
+        let _apt1 = add_apartment(
+            &pool,
+            &building_id,
+            "A",
+            "2024-01-01 00:00:00",
+            "Otto",
+            "2024-01-01",
+            None,
+        )
+        .await;
+        let _apt2 = add_apartment(
+            &pool,
+            &building_id,
+            "B",
+            "2024-01-02 00:00:00",
+            "Petra",
+            "2024-01-01",
+            None,
+        )
+        .await;
+
+        queries::update_building_rotation_seed(&pool, &building_id, 1)
+            .await
+            .expect("set rotation seed");
+
+        let schedule = schedule_for_year(&building_id, year, &pool)
+            .await
+            .expect("schedule");
+
+        // Seed 0 lets Otto (apartment A) take the even positions; seed 1 flips
+        // the alternation so Petra (apartment B) starts.
+        assert!(
+            schedule
+                .iter()
+                .enumerate()
+                .all(|(i, w)| { (i % 2 == 0) == (w.assignee_name.as_deref() == Some("Petra")) }),
+            "seed 1 must shift the rotation by one position"
+        );
+    }
+
     /// The +1 imbalance of a 52-week year over 3 apartments (18 vs 17 weeks)
     /// must rotate between the apartments across years: the rotation counter
     /// continues globally instead of restarting at the same offset each year.
