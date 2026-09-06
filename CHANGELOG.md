@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 <!-- git-cliff: end of header -->
 ## [0.4.0] - 2026-09-06
 
+## [0.4.0] - 2026-09-06
+
 ### Added
 
 - Add iCal feed for the Kehrwoche schedule
