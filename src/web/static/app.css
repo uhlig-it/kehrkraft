@@ -555,6 +555,12 @@ details.disclosure form {
   display: inline;
 }
 
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
 .card-header-actions {
   display: flex;
   align-items: center;
