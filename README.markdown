@@ -6,10 +6,7 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 
 # TODO
 
-* PDF layout must use both columns equally
-* Add the logo to the PDF
-* Add a QR code with a link to the schedule to the PDF
-* Move validation to the db layer as much as sensible, and keep it in the web layer only if it's not reasonably possible to do in the db layer.
+* Move validation to the db layer as much as sensible, and keep it in the web layer only if it's not reasonably possible to do in the db layer. Make it impossible for an apartment to have no ownership record
 * Make it impossible for an apartment to have no ownership record
 * iCal feed for a plan
 * List people and their roles (admin, owner, tenant) and their objects
