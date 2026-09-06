@@ -23,7 +23,8 @@ fn escape_typst_str(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-fn sanitize_filename(s: &str) -> String {
+/// Sanitize a string for use in a Content-Disposition filename.
+pub(crate) fn sanitize_filename(s: &str) -> String {
     s.chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect()
@@ -95,6 +96,14 @@ fn pdf_url_for(public_url: Option<&str>, secret_slug: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Absolute link for the iCal feed shown as the second QR code on the PDF;
+/// empty when no public URL is configured (see [`pdf_url_for`]).
+fn ical_url_for(public_url: Option<&str>, secret_slug: &str) -> String {
+    public_url
+        .map(|base| format!("{}/p/{}/kehrwoche.ics", base, secret_slug))
+        .unwrap_or_default()
+}
+
 pub async fn public_pdf(
     Path(secret_slug): Path<String>,
     State(pool): State<Db>,
@@ -143,9 +152,10 @@ pub async fn public_pdf(
 
     let (left_rows, right_rows) = balanced_columns(&prev_schedule, &schedule, &next_schedule);
 
-    // Absolute link for the QR code; empty when no public URL is configured,
-    // in which case the template renders a placeholder instead of a QR code.
+    // Absolute links for the QR codes; empty when no public URL is
+    // configured, in which case the template renders placeholders instead.
     let mut pdf_url = pdf_url_for(public_url.as_deref(), &secret_slug);
+    let mut ical_url = ical_url_for(public_url.as_deref(), &secret_slug);
 
     // Prepare a per-request temp directory
     let mut rnd_bytes = [0u8; 8];
@@ -180,12 +190,15 @@ pub async fn public_pdf(
             .into_response();
     }
 
-    // Generate the QR code pointing at the PDF itself.
-    if !pdf_url.is_empty() {
-        match QRBuilder::new(pdf_url.as_str()).build() {
+    // Generate the QR codes pointing at the PDF itself and at the iCal feed.
+    for (target_url, filename) in [(&mut pdf_url, "qr.svg"), (&mut ical_url, "qr_ical.svg")] {
+        if target_url.is_empty() {
+            continue;
+        }
+        match QRBuilder::new(target_url.as_str()).build() {
             Ok(qr) => {
                 let svg = SvgBuilder::default().to_str(&qr);
-                if fs::write(tmp_dir.join("qr.svg"), svg.as_bytes())
+                if fs::write(tmp_dir.join(filename), svg.as_bytes())
                     .await
                     .is_err()
                 {
@@ -196,7 +209,7 @@ pub async fn public_pdf(
             }
             Err(err) => {
                 tracing::warn!(%err, "QR code generation failed; rendering the PDF without a QR code");
-                pdf_url.clear();
+                target_url.clear();
             }
         }
     }
@@ -230,6 +243,7 @@ pub async fn public_pdf(
 #let left_rows = {left_rows}
 #let right_rows = {right_rows}
 #let pdf_url = "{pdf_url}"
+#let ical_url = "{ical_url}"
 
 #kehrwoche(
   building_name: building_name,
@@ -237,6 +251,7 @@ pub async fn public_pdf(
   left_rows: left_rows,
   right_rows: right_rows,
   pdf_url: pdf_url,
+  ical_url: ical_url,
 )
 "#,
         building_name = building_name_escaped,
@@ -244,6 +259,7 @@ pub async fn public_pdf(
         left_rows = left_rows_src,
         right_rows = right_rows_src,
         pdf_url = pdf_url,
+        ical_url = ical_url,
         version = version,
     );
 
@@ -442,5 +458,14 @@ mod tests {
             "https://kehrkraft.uhlig.it/p/abc_123/kehrwoche.pdf"
         );
         assert_eq!(pdf_url_for(None, "abc_123"), "");
+    }
+
+    #[test]
+    fn ical_url_is_built_from_public_url_and_slug() {
+        assert_eq!(
+            ical_url_for(Some("https://kehrkraft.uhlig.it"), "abc_123"),
+            "https://kehrkraft.uhlig.it/p/abc_123/kehrwoche.ics"
+        );
+        assert_eq!(ical_url_for(None, "abc_123"), "");
     }
 }

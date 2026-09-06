@@ -28,6 +28,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- New public iCal feed (`/p/{slug}/kehrwoche.ics`) with one all-day event per Kehrwoche week (Monday–Sunday) for the current and following year, so residents can subscribe in their calendar app. The admin pages link to it like the PDF, and the PDF's reserved QR slot now shows a QR code for the feed (when `KEHRKRAFT_PUBLIC_URL` is set).
 - The Kehrwoche PDF now uses both columns equally: the year's weeks are split into two balanced columns, padded with greyed-out weeks from the previous/next year when the year has 53 ISO weeks.
 - The Kehrwoche PDF carries the Kehrkraft logo (placed independently of the page flow, top-right), a QR code linking to the PDF itself, and a reserved slot for a second QR code to be added later. The QR code is printed only when the new `KEHRKRAFT_PUBLIC_URL` environment variable is set.
 

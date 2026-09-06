@@ -523,6 +523,58 @@ async fn public_pdf_endpoint_returns_pdf() {
 }
 
 #[tokio::test]
+async fn public_ical_feed_lists_kehrwoche_weeks() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    let id = create_building(&h, &client, "Kalenderhaus").await;
+    let detail = basic_auth(client.get(format!("{}/admin/buildings/{id}", h.base_url)))
+        .send()
+        .await
+        .expect("fetch building detail");
+    let html = detail.text().await.expect("building detail body");
+    let ics_path = Regex::new(r#"href="(/p/[^"]+/kehrwoche\.ics)""#)
+        .expect("regex")
+        .captures(&html)
+        .expect("iCal link on building page")[1]
+        .to_string();
+
+    // Public iCal feed: no authentication required.
+    let feed = reqwest::Client::new()
+        .get(format!("{}{}", h.base_url, ics_path))
+        .send()
+        .await
+        .expect("fetch public ical feed");
+    assert_eq!(feed.status(), StatusCode::OK);
+    assert_eq!(
+        feed.headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("text/calendar; charset=utf-8")
+    );
+    let body = feed.text().await.expect("ical body");
+    assert!(body.starts_with("BEGIN:VCALENDAR\r\n"), "{body:?}");
+    assert!(body.ends_with("END:VCALENDAR\r\n"), "{body:?}");
+    assert!(body.contains("BEGIN:VEVENT"), "has events, got {body:?}");
+    assert!(
+        body.contains("DTSTART;VALUE=DATE:") && body.contains("DTEND;VALUE=DATE:"),
+        "all-day events, got {body:?}"
+    );
+    assert!(body.contains("SUMMARY:"), "has summaries, got {body:?}");
+}
+
+#[tokio::test]
+async fn unknown_ical_slug_returns_404() {
+    let h = harness::start().await;
+    let feed = reqwest::Client::new()
+        .get(format!("{}/p/does-not-exist/kehrwoche.ics", h.base_url))
+        .send()
+        .await
+        .expect("fetch ical feed");
+    assert_eq!(feed.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn overlapping_ownerships_are_rejected() {
     let h = harness::start().await;
     let client = admin_client();
