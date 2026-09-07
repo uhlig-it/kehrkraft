@@ -6,8 +6,6 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 
 # TODO
 
-* Make frontent responsive and ensure that it works on a mobile devices.
-* When showing the full schedule ("Jahresplan"), name the links "Plan als öffentliches PDF" and "öffentlicher iCal-Feed"
 * Hourly database backup to S3 with retention (port sqlite-vault to sqlite-vault-rs)
 * Internationalization: Keep strings ready for EN/DE; "Kehrwoche" as canonical term. Collect all strings that need translation and suggest German alternatives, so that we can support both languages
 * Support path variables:
