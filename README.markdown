@@ -6,18 +6,17 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 
 # TODO
 
-* Create a dedicated page that lists people and their roles (admin, owner, tenant) and link to their objects. Whenever a person occurs in some role on the site, link to the person's page.
+* Make frontent responsive and ensure that it works on a mobile devices.
+* When showing the full schedule ("Jahresplan"), name the links "Plan als öffentliches PDF" and "öffentlicher iCal-Feed"
 * Hourly database backup to S3 with retention (port sqlite-vault to sqlite-vault-rs)
 * Internationalization: Keep strings ready for EN/DE; "Kehrwoche" as canonical term. Collect all strings that need translation and suggest German alternatives, so that we can support both languages
 * Support path variables:
   - `TYPST_BIN_PATH` (optional) - Full path to the typst executable that is to be used for generating the PDF invoice. Defaults to the first `typst` in the `$PATH`. If set and non-empty, that value is returned directly. Otherwise, "typst" is found in the system PATH.
   - `TYPST_SPOOL_DIR` (optional) - Path to an existing directory where the typst file for the PDF invoice, together with the JSON containing billing data and the Factur-X XML, will be stored. This contents of this directory are ephemeral, but they may be useful for troubleshooting PDF generation. Defaults to `$TMPDIR`.
-* Reminders that duty is due for a tenant / owner
-* When showing people `Bart Simpson <bart.simpson@example.com>`, omit the part in `<>`. Instead, show the email (as mailto: link) in their profile page
-* Make buildings editable
+* Create a dedicated page that lists people and their roles (admin, owner, tenant) and link to their objects. Whenever a person occurs in some role on the site, link to the person's page.
+* Reminders that duty is due for a tenant / owner (via forwardemail)
 * Switch to proper auth system
 * Read-only JSON feed for hardware integrations
-* Reminder eMails via forwardemail
 
 # Domain Model
 
