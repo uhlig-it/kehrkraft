@@ -1080,3 +1080,160 @@ async fn rotation_seed_can_be_changed_per_building() {
         "other building must keep its default seed"
     );
 }
+
+/// Buildings can be edited: the edit page pre-fills the current values
+/// (including the Ansprechpartner), the update redirects back to the building
+/// page, and the new name/description and contact show up there. Leaving both
+/// contact fields blank keeps the current Ansprechpartner.
+#[tokio::test]
+async fn building_can_be_edited() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    let id = create_building(&h, &client, "Haus Sonnenschein").await;
+
+    // The edit page pre-fills the current values, including the contact
+    // (create_building above stores Alice/alice@example.com).
+    let edit = basic_auth(client.get(format!("{}/admin/buildings/{id}/edit", h.base_url)))
+        .send()
+        .await
+        .expect("fetch edit page");
+    assert_eq!(edit.status(), StatusCode::OK);
+    let body = edit.text().await.expect("edit body");
+    assert!(body.contains("Gebäude bearbeiten"), "heading, got {body:?}");
+    assert!(
+        body.contains(r#"value="Haus Sonnenschein""#),
+        "name pre-filled, got {body:?}"
+    );
+    assert!(
+        body.contains(r#"value="A test building""#),
+        "description pre-filled, got {body:?}"
+    );
+    assert!(
+        body.contains(r#"value="Alice""#),
+        "admin name pre-filled, got {body:?}"
+    );
+    assert!(
+        body.contains(r#"value="alice@example.com""#),
+        "admin email pre-filled, got {body:?}"
+    );
+
+    // Saving redirects back to the building page. The Ansprechpartner is
+    // edited together with the building fields.
+    let update = basic_auth(client.post(format!("{}/admin/buildings/{id}/update", h.base_url)))
+        .form(&[
+            ("name", "Haus Regenbogen"),
+            ("description", "A nicer building"),
+            ("admin_name", "Bob"),
+            ("admin_email", "bob@example.com"),
+        ])
+        .send()
+        .await
+        .expect("update building");
+    assert_eq!(update.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        update
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok()),
+        Some(format!("/admin/buildings/{id}").as_str())
+    );
+
+    // The building page shows the edited values and the new contact.
+    let page = basic_auth(client.get(format!("{}/admin/buildings/{id}", h.base_url)))
+        .send()
+        .await
+        .expect("fetch building page");
+    let body = page.text().await.expect("building body");
+    assert!(body.contains("Haus Regenbogen"), "new name, got {body:?}");
+    assert!(
+        body.contains("A nicer building"),
+        "new description, got {body:?}"
+    );
+    assert!(
+        body.contains(r#"<a href="mailto:bob@example.com">Bob</a>"#),
+        "new contact shown, got {body:?}"
+    );
+
+    // Leaving both contact fields blank keeps the current Ansprechpartner.
+    let update = basic_auth(client.post(format!("{}/admin/buildings/{id}/update", h.base_url)))
+        .form(&[
+            ("name", "Haus Regenbogen"),
+            ("description", "A nicer building"),
+            ("admin_name", ""),
+            ("admin_email", ""),
+        ])
+        .send()
+        .await
+        .expect("update building without contact");
+    assert_eq!(update.status(), StatusCode::SEE_OTHER);
+    let page = basic_auth(client.get(format!("{}/admin/buildings/{id}", h.base_url)))
+        .send()
+        .await
+        .expect("fetch building page after blank contact");
+    let body = page
+        .text()
+        .await
+        .expect("building body after blank contact");
+    assert!(
+        body.contains(r#"<a href="mailto:bob@example.com">Bob</a>"#),
+        "contact unchanged when fields are blank, got {body:?}"
+    );
+}
+
+/// The Ansprechpartner is optional when creating a building: the form marks
+/// it as such, and blank contact fields create a building without one.
+#[tokio::test]
+async fn building_can_be_created_without_ansprechpartner() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    // The new-building form marks the Ansprechpartner as optional.
+    let form = basic_auth(client.get(format!("{}/admin/buildings/new", h.base_url)))
+        .send()
+        .await
+        .expect("fetch new-building page");
+    let form_body = form.text().await.expect("new-building body");
+    assert!(
+        form_body.contains("Ansprechpartner") && form_body.contains("(optional)"),
+        "contact marked optional on the create form, got {form_body:?}"
+    );
+
+    let resp = basic_auth(client.post(format!("{}/admin/buildings", h.base_url)))
+        .form(&[
+            ("name", "Haus Kontaktlos"),
+            ("description", ""),
+            ("admin_name", ""),
+            ("admin_email", ""),
+        ])
+        .send()
+        .await
+        .expect("create building without contact");
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let location = resp
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .expect("Location header")
+        .to_string();
+    assert!(
+        location.starts_with("/admin/buildings/"),
+        "got {location:?}"
+    );
+    let id = location.trim_start_matches("/admin/buildings/").to_string();
+
+    // The building page shows the building, but no contact line.
+    let page = basic_auth(client.get(format!("{}/admin/buildings/{id}", h.base_url)))
+        .send()
+        .await
+        .expect("fetch building page");
+    let body = page.text().await.expect("building body");
+    assert!(
+        body.contains("Haus Kontaktlos"),
+        "building shown, got {body:?}"
+    );
+    assert!(
+        !body.contains("Ansprechpartner"),
+        "no contact line without Ansprechpartner, got {body:?}"
+    );
+}

@@ -72,6 +72,19 @@ pub struct BuildingsNewTemplate {
     pub admin_email: String,
 }
 
+#[derive(Template)]
+#[template(path = "admin/buildings/edit.html")]
+pub struct BuildingsEditTemplate {
+    pub title: &'static str,
+    pub building: Building,
+    pub error: Option<String>,
+    /// Submitted values, preserved when validation fails.
+    pub name: String,
+    pub description: String,
+    pub admin_name: String,
+    pub admin_email: String,
+}
+
 /// One row of the Kehrwoche roster as the templates render it: dates in
 /// German display format, plus a flag for the week that is currently running.
 pub struct ScheduleRow {
@@ -244,6 +257,17 @@ pub struct CreateBuildingForm {
     pub admin_email: String,
 }
 
+/// Form data of the "edit building" page. The Ansprechpartner fields are
+/// optional: when both are left blank, the existing administrator record is
+/// kept unchanged.
+#[derive(serde::Deserialize)]
+pub struct UpdateBuildingForm {
+    pub name: String,
+    pub description: String,
+    pub admin_name: String,
+    pub admin_email: String,
+}
+
 /// Extract a database-level error message so it can be shown inline on the
 /// form that caused it. All validation rules live in the database (triggers
 /// that `RAISE(ABORT, …)` with a German message, see 0004_validation_in_db.sql);
@@ -303,6 +327,75 @@ pub async fn buildings_create(
             None => (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "Gebäude konnte nicht angelegt werden.",
+            )
+                .into_response(),
+        },
+    }
+}
+
+pub async fn buildings_edit(
+    Path(id): Path<String>,
+    State(pool): State<Db>,
+) -> impl axum::response::IntoResponse {
+    // get_building also returns the administrators, so the form can pre-fill
+    // the Ansprechpartner fields with the current contact.
+    let (building, admins) = match queries::get_building(&pool, &id).await {
+        Ok(Some(found)) => found,
+        Ok(None) => return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        Err(_) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Gebäude konnte nicht geladen werden.",
+            )
+                .into_response()
+        }
+    };
+    let admin = admins.first();
+    let name = building.name.clone();
+    let description = building.description.clone();
+    render(BuildingsEditTemplate {
+        title: "Gebäude bearbeiten",
+        building,
+        error: None,
+        name,
+        description,
+        admin_name: admin.map_or_else(String::new, |a| a.name.clone()),
+        admin_email: admin.map_or_else(String::new, |a| a.email.clone()),
+    })
+}
+
+pub async fn buildings_update(
+    Path(id): Path<String>,
+    State(pool): State<Db>,
+    Form(form): Form<UpdateBuildingForm>,
+) -> impl axum::response::IntoResponse {
+    let building = match load_building(&pool, &id).await {
+        Ok(b) => b,
+        Err(err) => return err.into_response(),
+    };
+
+    // The Ansprechpartner is optional on the edit form: when both fields are
+    // blank, the existing administrator record stays untouched.
+    let administrator = match (form.admin_name.as_str(), form.admin_email.as_str()) {
+        (name, email) if name.trim().is_empty() && email.trim().is_empty() => None,
+        (name, email) => Some((name, email)),
+    };
+
+    match queries::update_building(&pool, &id, &form.name, &form.description, administrator).await {
+        Ok(_) => Redirect::to(&format!("/admin/buildings/{id}")).into_response(),
+        Err(err) => match db_message(&err) {
+            Some(msg) => render_bad_request(BuildingsEditTemplate {
+                title: "Gebäude bearbeiten",
+                building,
+                error: Some(msg),
+                name: form.name,
+                description: form.description,
+                admin_name: form.admin_name,
+                admin_email: form.admin_email,
+            }),
+            None => (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Gebäude konnte nicht gespeichert werden.",
             )
                 .into_response(),
         },

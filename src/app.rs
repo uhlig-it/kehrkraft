@@ -308,6 +308,11 @@ pub fn build_router(
         )
         .route("/admin/buildings/new", get(admin::buildings_new))
         .route("/admin/buildings/{id}", get(admin::buildings_show))
+        .route("/admin/buildings/{id}/edit", get(admin::buildings_edit))
+        .route(
+            "/admin/buildings/{id}/update",
+            axum::routing::post(admin::buildings_update),
+        )
         .route(
             "/admin/buildings/{id}/schedule",
             get(admin::buildings_schedule),

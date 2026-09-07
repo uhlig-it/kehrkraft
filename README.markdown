@@ -20,7 +20,7 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 
 # Domain Model
 
-- A building has a name (max. 30 chars) and description (no limit) and at least one administrator (contact).
+- A building has a name (max. 30 chars) and description (no limit) and an optional Ansprechpartner (administrator contact; set when creating or editing the building, may be omitted).
 - A building consists of zero or more apartments
 - An apartment has a name (max. 30 chars) and description (no limit). Conversely, an apartment belongs to a building.
 - Each apartment has, at any point in time, an owner (we store name and email). Conversely, an owner might own apartments in zero or more buildings.

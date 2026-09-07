@@ -71,6 +71,10 @@ pub async fn get_building_by_slug(pool: &Db, slug: &str) -> Result<Option<Buildi
     .await
 }
 
+/// Create a building together with its first Ansprechpartner. The
+/// Ansprechpartner is optional: when both `admin_name` and `admin_email` are
+/// blank, the building is created without one (a partially filled contact is
+/// still inserted and rejected by the database triggers).
 pub async fn create_building(
     pool: &SqlitePool,
     name: &str,
@@ -96,19 +100,21 @@ pub async fn create_building(
     .execute(&mut *tx)
     .await?;
 
-    let admin_id = gen_token();
-    sqlx::query(
-        r#"
-        INSERT INTO building_administrators (id, building_id, name, email)
-        VALUES (?, ?, ?, ?)
-        "#,
-    )
-    .bind(&admin_id)
-    .bind(&building_id)
-    .bind(admin_name)
-    .bind(admin_email)
-    .execute(&mut *tx)
-    .await?;
+    if !admin_name.trim().is_empty() || !admin_email.trim().is_empty() {
+        let admin_id = gen_token();
+        sqlx::query(
+            r#"
+            INSERT INTO building_administrators (id, building_id, name, email)
+            VALUES (?, ?, ?, ?)
+            "#,
+        )
+        .bind(&admin_id)
+        .bind(&building_id)
+        .bind(admin_name)
+        .bind(admin_email)
+        .execute(&mut *tx)
+        .await?;
+    }
 
     tx.commit().await?;
 
@@ -124,6 +130,76 @@ pub async fn create_building(
     .await?;
 
     Ok(building)
+}
+
+/// Update a building's name and description, and optionally its
+/// Ansprechpartner: when `administrator` is `Some((name, email))` the
+/// building's oldest administrator row (the one created with the building) is
+/// set to it, or a new row is inserted when the building has none. All
+/// changes happen in one transaction; the database rejects empty names and
+/// malformed e-mails.
+pub async fn update_building(
+    pool: &Db,
+    id: &str,
+    name: &str,
+    description: &str,
+    administrator: Option<(&str, &str)>,
+) -> Result<Building, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+
+    sqlx::query("UPDATE buildings SET name = ?, description = ? WHERE id = ?")
+        .bind(name)
+        .bind(description)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+
+    if let Some((admin_name, admin_email)) = administrator {
+        let existing: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM building_administrators WHERE building_id = ? ORDER BY created_at ASC LIMIT 1",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        match existing {
+            Some(admin_id) => {
+                sqlx::query("UPDATE building_administrators SET name = ?, email = ? WHERE id = ?")
+                    .bind(admin_name)
+                    .bind(admin_email)
+                    .bind(admin_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            None => {
+                let admin_id = gen_token();
+                sqlx::query(
+                    r#"
+                    INSERT INTO building_administrators (id, building_id, name, email)
+                    VALUES (?, ?, ?, ?)
+                    "#,
+                )
+                .bind(admin_id)
+                .bind(id)
+                .bind(admin_name)
+                .bind(admin_email)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+    }
+
+    tx.commit().await?;
+
+    sqlx::query_as::<_, Building>(
+        r#"
+        SELECT id, name, description, secret_slug, rotation_seed, created_at, updated_at
+        FROM buildings
+        WHERE id = ?
+        "#,
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
 }
 
 pub async fn delete_building(pool: &Db, id: &str) -> Result<bool, sqlx::Error> {
