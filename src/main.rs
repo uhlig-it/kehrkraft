@@ -1,7 +1,9 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use chrono::Utc;
 use kehrkraft::app;
+use kehrkraft::backup;
 use kehrkraft::config;
 use kehrkraft::db;
 use tokio::net::TcpListener;
@@ -86,8 +88,30 @@ async fn bind_http_listener() -> Result<TcpListener, Box<dyn std::error::Error>>
     Ok(listener)
 }
 
+/// `kehrkraft verify` downloads the latest hourly backup, decrypts it, and
+/// checks its integrity and freshness. Exits non-zero on failure so it can be
+/// used as a cron health check (from this host or any other).
+async fn run_verify() -> Result<(), Box<dyn std::error::Error>> {
+    init_tracing();
+
+    let config = backup::Config::from_env()?
+        .ok_or("backups are disabled: set KEHRKRAFT_BACKUP_BUCKET to verify")?;
+    let store = backup::build_store(&config)?;
+    backup::verify(&config, store.as_ref(), Utc::now()).await?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    match std::env::args().nth(1).as_deref() {
+        Some("verify") => return run_verify().await,
+        Some(other) => {
+            eprintln!("unknown command: {other}\n\nusage: kehrkraft [verify]");
+            std::process::exit(2);
+        }
+        None => {}
+    }
+
     init_tracing();
 
     let typst = typst_available().await;
@@ -98,6 +122,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize database pool and run migrations
     let pool = db::connect_pool().await?;
     db::migrate(&pool).await?;
+
+    // Hourly encrypted S3 backups: opt-in via KEHRKRAFT_BACKUP_BUCKET; runs in
+    // a background task immediately and then once per hour.
+    if let Some(config) = backup::Config::from_env()? {
+        let runner = backup::Runner::new(config, pool.clone())?;
+        tracing::info!("starting hourly encrypted backups");
+        tokio::spawn(backup::run_forever(runner));
+    } else {
+        tracing::info!(
+            "backups disabled: set KEHRKRAFT_BACKUP_BUCKET to enable hourly encrypted S3 backups"
+        );
+    }
 
     // Admin area authentication: required unless demo mode is on.
     let demo_mode = config::demo_mode_from_env();

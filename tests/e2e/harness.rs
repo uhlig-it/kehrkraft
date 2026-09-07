@@ -35,6 +35,10 @@ pub async fn start_demo() -> Harness {
 }
 
 async fn start_with(admin_credentials: Option<(String, String)>, demo_mode: bool) -> Harness {
+    // reqwest (rustls-no-provider) needs a crypto provider before any client
+    // can be built; idempotent.
+    kehrkraft::backup::init_rustls_crypto();
+
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")

@@ -26,6 +26,10 @@ async fn start_app() -> (String, sqlx::SqlitePool) {
 }
 
 async fn start_app_with(public_url: Option<String>) -> (String, sqlx::SqlitePool) {
+    // reqwest (rustls-no-provider) needs a crypto provider before any client
+    // can be built; idempotent.
+    kehrkraft::backup::init_rustls_crypto();
+
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")

@@ -6,7 +6,6 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 
 # TODO
 
-* Hourly database backup to S3 with retention (port sqlite-vault to sqlite-vault-rs)
 * Internationalization: Keep strings ready for EN/DE; "Kehrwoche" as canonical term. Collect all strings that need translation and suggest German alternatives, so that we can support both languages
 * Support path variables:
   - `TYPST_BIN_PATH` (optional) - Full path to the typst executable that is to be used for generating the PDF invoice. Defaults to the first `typst` in the `$PATH`. If set and non-empty, that value is returned directly. Otherwise, "typst" is found in the system PATH.
@@ -58,7 +57,7 @@ The image bundles the Typst CLI, so PDF generation works inside the container ou
 
 # Testing
 
-All tests use their own fresh in-memory SQLite database (`sqlite::memory:`); no setup needed.
+All tests use their own fresh SQLite database: in-memory for the app tests, and a temporary file for the backup tests (`VACUUM INTO` requires a file-backed source). No setup needed.
 
 ```command
 $ cargo test
@@ -66,7 +65,7 @@ $ cargo test
 
 This runs:
 
-- Unit tests: DB `queries` and migrations, including the validation rules the database enforces via triggers (names, e-mail, date formats, ownership chain tiling, tenancy overlap, „every apartment has an owner“); scheduler.
+- Unit tests: DB `queries` and migrations, including the validation rules the database enforces via triggers (names, e-mail, date formats, ownership chain tiling, tenancy overlap, „every apartment has an owner“); scheduler; backup (slot naming, age encryption round-trips, backup/verify against an in-memory object store).
 - A PDF integration test that boots the real router, creates a building, and fetches `/p/{slug}/kehrwoche.pdf` over HTTP, asserting the body is a non-empty PDF.
 - End-to-end tests (`tests/e2e/`) that drive the full app over HTTP: Basic Auth (401 without; buildings home page with), create building + apartment (with its first owner) + owner + tenancy (including rejection of overlapping tenancies and ownerships), drag reorder of apartments, schedule preview, and the public PDF/ iCal feed fetches.
 
@@ -88,6 +87,65 @@ In another terminal:
 $ sqlite3 kehrkraft.db < fixtures/demo.sql
 ```
 
+# Backups (S3)
+
+Kehrkraft takes hourly, encrypted backups of its SQLite database to any S3-compatible object store (AWS S3, Backblaze B2, MinIO). The concept is ported from [sqlite-vault](https://github.com/suhlig/sqlite-vault): a consistent snapshot via `VACUUM INTO`, age/scrypt encryption (restorable with `rage`), and deterministic object names that implement retention by overwriting — no deletion step, and at most ~85 objects in the bucket (24 hourly + 7 daily + 53 weekly + yearly). Hourly backups run for every hour except 04:00 UTC, which produces the daily/weekly/yearly backup instead.
+
+Backups are opt-in: set `KEHRKRAFT_BACKUP_BUCKET` and the app starts a background task that takes a backup immediately at startup and then once per hour. A canary row inside the database prevents a restart within the same hour from overwriting the existing backup of that slot; `kehrkraft verify` uses the same row to check freshness.
+
+**Make sure the S3 bucket has versioning disabled**; otherwise objects are never replaced and retention accumulates them forever.
+
+## Configuration
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `KEHRKRAFT_BACKUP_BUCKET` | yes* | – | S3 bucket name. Unset: backups disabled. Set: backups enabled. |
+| `KEHRKRAFT_BACKUP_ACCESS_KEY` | yes | – | Access key / application key id. |
+| `KEHRKRAFT_BACKUP_SECRET_KEY` | yes | – | Secret key / application key. |
+| `KEHRKRAFT_BACKUP_PASSPHRASE` | yes | – | age passphrase; backups are never stored unencrypted. |
+| `KEHRKRAFT_BACKUP_ENDPOINT` | no | AWS region endpoint | S3-compatible endpoint, e.g. `https://s3.us-west-004.backblazeb2.com` for B2 (`http://…` is allowed for local MinIO). |
+| `KEHRKRAFT_BACKUP_REGION` | no | `us-east-1` | S3 region. |
+| `KEHRKRAFT_BACKUP_PREFIX` | no | `kehrkraft` | Object name prefix. |
+| `KEHRKRAFT_BACKUP_MAX_AGE_HOURS` | no | `26` | Maximum acceptable canary age for `kehrkraft verify`. |
+
+All variables except the bucket are only required when backups are enabled.
+
+Example for Backblaze B2:
+
+1. Create the bucket and an application key with `listFiles, readFiles, writeFiles` permissions (see the [sqlite-vault README](https://github.com/suhlig/sqlite-vault) for exact commands).
+1. Run the container:
+
+   ```command
+   $ docker run --rm \
+       -e KEHRKRAFT_BACKUP_BUCKET=kehrkraft-backup \
+       -e KEHRKRAFT_BACKUP_ENDPOINT=https://s3.us-west-004.backblazeb2.com \
+       -e KEHRKRAFT_BACKUP_REGION=us-west-004 \
+       -e KEHRKRAFT_BACKUP_ACCESS_KEY=... \
+       -e KEHRKRAFT_BACKUP_SECRET_KEY=... \
+       -e KEHRKRAFT_BACKUP_PASSPHRASE="horse battery staple" \
+       kehrkraft
+   ```
+
+## Verification
+
+`kehrkraft verify` downloads the latest hourly backup, decrypts it, runs `PRAGMA integrity_check`, and fails (exit non-zero) when the canary is older than `KEHRKRAFT_BACKUP_MAX_AGE_HOURS`. Run it from any host with the same `KEHRKRAFT_BACKUP_*` configuration, e.g. as a cron health check:
+
+```command
+$ KEHRKRAFT_BACKUP_BUCKET=kehrkraft-backup \
+    KEHRKRAFT_BACKUP_ENDPOINT=https://s3.us-west-004.backblazeb2.com \
+    KEHRKRAFT_BACKUP_REGION=us-west-004 \
+    KEHRKRAFT_BACKUP_ACCESS_KEY=... \
+    KEHRKRAFT_BACKUP_SECRET_KEY=... \
+    KEHRKRAFT_BACKUP_PASSPHRASE="horse battery staple" \
+    kehrkraft verify
+```
+
+## Restore
+
+1. Download the `.age` file from the bucket, e.g. `b2 file download --no-progress b2://kehrkraft-backup/kehrkraft.hourly-09.db.age kehrkraft.db.age`.
+1. Decrypt: `rage --decrypt --output kehrkraft.db kehrkraft.db.age`.
+1. Check your data: `sqlite3 kehrkraft.db`.
+
 # Implementation
 
 - Admin pages use a hand-rolled stylesheet (`/static/app.css`, embedded into the binary); no CSS framework.
@@ -95,6 +153,7 @@ $ sqlite3 kehrkraft.db < fixtures/demo.sql
 - PDF rendering is done via Typst.
 - The iCal feed (`/p/{slug}/kehrwoche.ics`) is generated in Rust without extra dependencies (RFC 5545, all-day events).
 - The app listens on plain HTTP; port is read from env var PORT, otherwise binds to an OS-assigned ephemeral port (>1024).
+- Hourly encrypted backups (`src/backup/`) run in-process via a tokio task; object names, alias pointers, and the canary schema mirror sqlite-vault so backups stay interchangeable with that tooling.
 - Testing includes unit tests, HTTP-level end-to-end tests, and a PDF integration test, each using a fresh in-memory SQLite database.
 
 ## Plan
