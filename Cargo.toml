@@ -22,7 +22,7 @@ tower-http = { version = "0.6", features = ["trace", "compression-gzip", "limit"
 
 [dev-dependencies]
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-tls"] }
 
 [[test]]
 name = "unit_building_crud"
