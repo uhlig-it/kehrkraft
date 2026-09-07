@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use chrono::{Datelike, Duration, NaiveDate, Weekday};
 
-use crate::db::models::{Apartment, Ownership, Tenancy};
+use crate::db::models::{Apartment, BuildingOwner, Ownership, Tenancy};
 use crate::db::{queries, Db};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,6 +84,30 @@ impl DatedRecord for Tenancy {
     }
 }
 
+/// Building owners cover all apartments of their building; `apartment_id`
+/// carries the building id instead (unused by the schedule logic, which
+/// resolves buildings via a separate fallback list).
+impl DatedRecord for BuildingOwner {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn apartment_id(&self) -> &str {
+        &self.building_id
+    }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn email(&self) -> &str {
+        &self.email
+    }
+    fn start_date(&self) -> &str {
+        &self.start_date
+    }
+    fn end_date(&self) -> Option<&str> {
+        self.end_date.as_deref()
+    }
+}
+
 #[derive(Clone, Debug)]
 struct DatedPerson {
     id: String,
@@ -148,9 +172,13 @@ fn majority_owner<'a>(
 ///   years (see `global_week_index`); `rotation_seed` is the base offset.
 /// - Every week has an assignee once at least one apartment has an owner:
 ///   the week belongs to the apartment's owner covering most of it, so
-///   transition weeks between two owners are always resolved. Apartments
-///   join the rotation with the first week that is at least half covered;
-///   apartments without any covering ownership are skipped that week.
+///   transition weeks between two owners are always resolved. An apartment
+///   without its own ownership falls back to the building's owner (one
+///   entity owns the whole building, see `building_owners`), whose periods
+///   tile the building's timeline like an apartment's ownerships do.
+///   Apartments join the rotation with the first week that is at least half
+///   covered; apartments without any covering ownership are skipped that
+///   week.
 /// - If the chosen apartment has a tenancy covering the whole week, the
 ///   responsibility is delegated to the tenant (whole-week rule, so a
 ///   tenant is never responsible before their tenancy begins).
@@ -170,8 +198,11 @@ pub async fn schedule_for_year(
     // Load owners, tenants, and apartments of the building
     let ownerships = queries::list_ownerships_for_building(pool, building_id).await?;
     let tenancies = queries::list_tenancies_for_building(pool, building_id).await?;
+    let building_owners = queries::list_building_owners(pool, building_id).await?;
     let owners = parse_people(ownerships)?;
     let tenancies = parse_people(tenancies)?;
+    let building_owner_people = parse_people(building_owners)?;
+    let building_owner_refs: Vec<&DatedPerson> = building_owner_people.iter().collect();
 
     // Immutable rotation order: apartment creation order, id as tie-break
     // (creation timestamps have second granularity).
@@ -199,13 +230,16 @@ pub async fn schedule_for_year(
     while week_start.iso_week().year() == year {
         let week_end = week_start + Duration::days(6);
 
-        // Apartments with an owner for this week, in rotation order
+        // Apartments with an owner for this week, in rotation order. An
+        // apartment's own ownership wins; otherwise the building owner
+        // covers it (if it covers this week).
         let covered: Vec<(&Apartment, &DatedPerson)> = apartments
             .iter()
             .filter_map(|apartment| {
                 let owner = owners_by_apartment
                     .get(apartment.id.as_str())
-                    .and_then(|owners| majority_owner(owners, week_start, week_end))?;
+                    .and_then(|owners| majority_owner(owners, week_start, week_end))
+                    .or_else(|| majority_owner(&building_owner_refs, week_start, week_end))?;
                 Some((apartment, owner))
             })
             .collect();
@@ -920,5 +954,116 @@ mod tests {
             .expect("week 2026-02-02");
         assert_eq!(week_after.assignee_name.as_deref(), Some("Nora"));
         assert!(week_after.delegated);
+    }
+
+    async fn add_building_owner(pool: &Db, building_id: &str, name: &str, start: &str) {
+        queries::create_building_owner(
+            pool,
+            building_id,
+            name,
+            &format!("{name}@example.com"),
+            start,
+            None,
+        )
+        .await
+        .expect("create building owner");
+    }
+
+    /// Create an apartment without its own ownership; it is covered by the
+    /// building owner.
+    async fn add_building_owned_apartment(
+        pool: &Db,
+        building_id: &str,
+        name: &str,
+        created_at: &str,
+    ) -> Apartment {
+        let apartment = queries::create_apartment_building_owned(pool, building_id, name, "")
+            .await
+            .expect("create building-owned apartment");
+        sqlx::query("UPDATE apartments SET created_at = ? WHERE id = ?")
+            .bind(created_at)
+            .bind(&apartment.id)
+            .execute(pool)
+            .await
+            .expect("set created_at");
+        apartment
+    }
+
+    #[tokio::test]
+    async fn building_owner_covers_apartments_without_ownership() {
+        let (pool, building_id) = setup().await;
+        let year = 2024;
+        add_building_owner(&pool, &building_id, "Deutsche Wohnbau SE", "1995-01-01").await;
+        let _apt1 =
+            add_building_owned_apartment(&pool, &building_id, "A", "2024-01-01 00:00:00").await;
+        let _apt2 =
+            add_building_owned_apartment(&pool, &building_id, "B", "2024-01-02 00:00:00").await;
+
+        let schedule = schedule_for_year(&building_id, year, &pool)
+            .await
+            .expect("schedule");
+        assert!(schedule.len() >= 52);
+        assert!(schedule.iter().all(|w| {
+            w.assignee_name.as_deref() == Some("Deutsche Wohnbau SE") && !w.delegated
+        }));
+    }
+
+    #[tokio::test]
+    async fn building_owner_rented_apartment_delegates_to_tenant() {
+        let (pool, building_id) = setup().await;
+        let year = 2024;
+        add_building_owner(&pool, &building_id, "Deutsche Wohnbau SE", "1995-01-01").await;
+        let apt =
+            add_building_owned_apartment(&pool, &building_id, "A", "2024-01-01 00:00:00").await;
+        add_tenant(&pool, &apt.id, "Ronny", &format!("{year}-01-01"), None).await;
+
+        let schedule = schedule_for_year(&building_id, year, &pool)
+            .await
+            .expect("schedule");
+        assert!(schedule
+            .iter()
+            .all(|w| { w.assignee_name.as_deref() == Some("Ronny") && w.delegated }));
+    }
+
+    #[tokio::test]
+    async fn apartment_ownership_wins_over_building_owner() {
+        let (pool, building_id) = setup().await;
+        let year = 2024;
+        add_building_owner(&pool, &building_id, "Deutsche Wohnbau SE", "1995-01-01").await;
+        let _apt1 = add_apartment(
+            &pool,
+            &building_id,
+            "A",
+            "2024-01-01 00:00:00",
+            "Alice",
+            "2024-01-01",
+            None,
+        )
+        .await;
+        let _apt2 =
+            add_building_owned_apartment(&pool, &building_id, "B", "2024-01-02 00:00:00").await;
+
+        let schedule = schedule_for_year(&building_id, year, &pool)
+            .await
+            .expect("schedule");
+        // Apartment A has its own owner, apartment B falls back to the building
+        // owner; the two alternate week by week.
+        assert!(schedule.iter().all(|w| {
+            matches!(
+                w.assignee_name.as_deref(),
+                Some("Alice" | "Deutsche Wohnbau SE")
+            )
+        }));
+        assert_eq!(
+            schedule
+                .iter()
+                .filter(|w| w.assignee_name.as_deref() == Some("Deutsche Wohnbau SE"))
+                .count(),
+            schedule
+                .iter()
+                .filter(|w| w.assignee_name.as_deref() == Some("Alice"))
+                .count(),
+            "both apartments rotate evenly"
+        );
     }
 }

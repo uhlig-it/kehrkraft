@@ -7,6 +7,8 @@
   <a href="/admin">Gebäude</a><span class="sep">/</span><span>{{ building.name }}</span>
 </nav>
 
+{% include "admin/_error.html" %}
+
 <div class="page-header">
   <div>
     <h1>{{ building.name }}</h1>
@@ -86,6 +88,48 @@
     {% include "admin/apartments/_table_body.html" %}
   </table>
   <p class="muted">Die Reihenfolge in dieser Liste dient nur der Anzeige; die Kehrwoche-Rotation folgt der Anlage-Reihenfolge der Wohnungen (Badge „Rotation“).</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="card-header">
+    <h2>Gebäudeeigentümer</h2>
+    <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/building_owners/new">Eigentümer hinzufügen</a>
+  </div>
+  {% if building_owners.len() == 0 %}
+  <p class="muted">Kein Eigentümer für das gesamte Gebäude erfasst – dann braucht jede Wohnung einen eigenen Eigentümer.</p>
+  {% else %}
+  <p class="muted">Der Gebäudeeigentümer besitzt alle Wohnungen; einzelne Wohnungseigentümer sind dann nicht erforderlich. Vermietete Wohnungen delegieren die Kehrwoche weiterhin an den Mieter.</p>
+  <table class="table table-compact">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>E-Mail</th>
+        <th>Beginn</th>
+        <th>Ende</th>
+        <th class="col-actions"></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for o in building_owners %}
+      <tr>
+        <td data-label="Name">{{ o.name }}</td>
+        <td data-label="E-Mail">{{ o.email }}</td>
+        <td data-label="Beginn">{{ o.start_date }}</td>
+        <td data-label="Ende">{% if o.end_date.is_some() %}{{ o.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
+        <td class="col-actions">
+          <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/building_owners/{{ o.id }}/edit">Bearbeiten</a>
+          <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/building_owners/{{ o.id }}/delete"
+                hx-post="/admin/buildings/{{ building.id }}/building_owners/{{ o.id }}/delete"
+                hx-confirm="Diesen Gebäudeeigentümer löschen?">
+            <button type="submit" class="btn btn-danger btn-sm">Löschen</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">Die Zeiträume reihen sich lückenlos aneinander: Ein neuer Eigentümer beginnt am Tag nach dem Ende des vorherigen.</p>
   {% endif %}
 </section>
 

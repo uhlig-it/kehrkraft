@@ -384,6 +384,26 @@ pub fn build_router(
         .route(
             "/admin/buildings/{id}/apartments/{apartment_id}/tenancies/{tenancy_id}/delete",
             axum::routing::post(admin::tenancies_delete),
+        )
+        .route(
+            "/admin/buildings/{id}/building_owners/new",
+            get(admin::building_owners_new),
+        )
+        .route(
+            "/admin/buildings/{id}/building_owners",
+            axum::routing::post(admin::building_owners_create),
+        )
+        .route(
+            "/admin/buildings/{id}/building_owners/{owner_id}/edit",
+            get(admin::building_owners_edit),
+        )
+        .route(
+            "/admin/buildings/{id}/building_owners/{owner_id}",
+            axum::routing::post(admin::building_owners_update),
+        )
+        .route(
+            "/admin/buildings/{id}/building_owners/{owner_id}/delete",
+            axum::routing::post(admin::building_owners_delete),
         );
 
     let public_router = Router::new()

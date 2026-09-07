@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Kehrkraft: {{ title }}{% endblock %}
+
+{% block content %}
+<nav class="breadcrumb">
+  <a href="/admin">Gebäude</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><span>{{ title }}</span>
+</nav>
+
+<div class="page-header">
+  <h1>{{ title }}: {{ building.name }}</h1>
+  <p class="subtitle">Ein Gebäudeeigentümer besitzt alle Wohnungen des Gebäudes; einzelne Wohnungseigentümer sind dann nicht erforderlich.</p>
+</div>
+
+<div class="card">
+  {% include "admin/_error.html" %}
+  <form method="post" action="{{ action }}">
+    <label class="field">
+      Name
+      <input type="text" name="name" value="{{ form.name }}" required />
+    </label>
+
+    <label class="field">
+      E-Mail
+      <input type="email" name="email" value="{{ form.email }}" required />
+    </label>
+
+    <label class="field">
+      Eigentum ab
+      <input type="date" name="start_date" value="{{ form.start_date }}" required />
+    </label>
+
+    <label class="field">
+      Eigentum bis <span class="hint">(optional)</span>
+      <input type="date" name="end_date" value="{% if let Some(ed) = form.end_date %}{{ ed }}{% endif %}" />
+    </label>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">{{ submit_label }}</button>
+      <a class="btn btn-secondary" href="{{ cancel_url }}">Abbrechen</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

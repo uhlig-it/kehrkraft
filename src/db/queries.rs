@@ -2,7 +2,9 @@ use base64::Engine as _;
 use rand::RngCore;
 use sqlx::SqlitePool;
 
-use crate::db::models::{Apartment, Building, BuildingAdministrator, Ownership, Tenancy};
+use crate::db::models::{
+    Apartment, Building, BuildingAdministrator, BuildingOwner, Ownership, Tenancy,
+};
 use crate::db::Db;
 
 fn gen_token() -> String {
@@ -264,9 +266,10 @@ pub async fn get_apartment(pool: &Db, id: &str) -> Result<Option<Apartment>, sql
     .await
 }
 
-/// The initial ownership record that must be created together with its
-/// apartment; the database rejects apartments without an ownership record
-/// (see the `apartments_require_ownership` trigger in 0004_validation_in_db.sql).
+/// The initial ownership record that is normally created together with its
+/// apartment; the database rejects apartments without any coverage (neither
+/// their own ownership record nor a building owner, see the
+/// `apartments_require_ownership` trigger in 0004/0005).
 pub struct NewOwner<'a> {
     pub name: &'a str,
     pub email: &'a str,
@@ -302,6 +305,47 @@ pub async fn create_apartment(
     .bind(initial_owner.end_date)
     .execute(&mut *tx)
     .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO apartments (id, building_id, name, description, position)
+        VALUES (?, ?, ?, ?, COALESCE((SELECT MAX(position) FROM apartments WHERE building_id = ?), -1) + 1)
+        "#,
+    )
+    .bind(&id)
+    .bind(building_id)
+    .bind(name)
+    .bind(description)
+    .bind(building_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    sqlx::query_as::<_, Apartment>(
+        r#"
+        SELECT id, building_id, name, description, position, created_at
+        FROM apartments
+        WHERE id = ?
+        "#,
+    )
+    .bind(&id)
+    .fetch_one(pool)
+    .await
+}
+
+/// Create an apartment without an initial ownership record; it is then owned
+/// by the building's owner (see `building_owners` in 0005_building_owners.sql).
+/// The `apartments_require_ownership` trigger rejects it unless the building
+/// has a building owner covering the current date.
+pub async fn create_apartment_building_owned(
+    pool: &Db,
+    building_id: &str,
+    name: &str,
+    description: &str,
+) -> Result<Apartment, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let id = gen_token();
 
     sqlx::query(
         r#"
@@ -530,6 +574,139 @@ pub async fn update_ownership(
 
 pub async fn delete_ownership(pool: &Db, id: &str) -> Result<bool, sqlx::Error> {
     let res = sqlx::query("DELETE FROM ownerships WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected() > 0)
+}
+
+// Building owners CRUD
+
+/// All building-owner periods of a building, oldest first.
+pub async fn list_building_owners(
+    pool: &Db,
+    building_id: &str,
+) -> Result<Vec<BuildingOwner>, sqlx::Error> {
+    sqlx::query_as::<_, BuildingOwner>(
+        r#"
+        SELECT id, building_id, name, email, start_date, end_date, created_at
+        FROM building_owners
+        WHERE building_id = ?
+        ORDER BY start_date ASC, name ASC
+        "#,
+    )
+    .bind(building_id)
+    .fetch_all(pool)
+    .await
+}
+
+/// The building-owner period covering the current date, if any.
+pub async fn get_current_building_owner(
+    pool: &Db,
+    building_id: &str,
+) -> Result<Option<BuildingOwner>, sqlx::Error> {
+    sqlx::query_as::<_, BuildingOwner>(
+        r#"
+        SELECT id, building_id, name, email, start_date, end_date, created_at
+        FROM building_owners
+        WHERE building_id = ?
+          AND start_date <= date('now', 'localtime')
+          AND (end_date IS NULL OR end_date >= date('now', 'localtime'))
+        ORDER BY start_date DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(building_id)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn get_building_owner(pool: &Db, id: &str) -> Result<Option<BuildingOwner>, sqlx::Error> {
+    sqlx::query_as::<_, BuildingOwner>(
+        r#"
+        SELECT id, building_id, name, email, start_date, end_date, created_at
+        FROM building_owners
+        WHERE id = ?
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn create_building_owner(
+    pool: &Db,
+    building_id: &str,
+    name: &str,
+    email: &str,
+    start_date: &str,
+    end_date: Option<&str>,
+) -> Result<BuildingOwner, sqlx::Error> {
+    let id = gen_token();
+    sqlx::query(
+        r#"
+        INSERT INTO building_owners (id, building_id, name, email, start_date, end_date)
+        VALUES (?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(&id)
+    .bind(building_id)
+    .bind(name)
+    .bind(email)
+    .bind(start_date)
+    .bind(end_date)
+    .execute(pool)
+    .await?;
+
+    sqlx::query_as::<_, BuildingOwner>(
+        r#"
+        SELECT id, building_id, name, email, start_date, end_date, created_at
+        FROM building_owners
+        WHERE id = ?
+        "#,
+    )
+    .bind(&id)
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn update_building_owner(
+    pool: &Db,
+    id: &str,
+    name: &str,
+    email: &str,
+    start_date: &str,
+    end_date: Option<&str>,
+) -> Result<BuildingOwner, sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE building_owners
+        SET name = ?, email = ?, start_date = ?, end_date = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(name)
+    .bind(email)
+    .bind(start_date)
+    .bind(end_date)
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    sqlx::query_as::<_, BuildingOwner>(
+        r#"
+        SELECT id, building_id, name, email, start_date, end_date, created_at
+        FROM building_owners
+        WHERE id = ?
+        "#,
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn delete_building_owner(pool: &Db, id: &str) -> Result<bool, sqlx::Error> {
+    let res = sqlx::query("DELETE FROM building_owners WHERE id = ?")
         .bind(id)
         .execute(pool)
         .await?;
@@ -1379,5 +1556,274 @@ mod tests {
             .map(|ap| ap.id)
             .collect();
         assert_eq!(order, vec![a.id, b.id]);
+    }
+
+    #[tokio::test]
+    async fn building_owner_crud_works() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory");
+
+        migrate(&pool).await.expect("migrate");
+
+        let building = create_building(&pool, "Test Building", "", "Alice", "alice@example.com")
+            .await
+            .expect("create building");
+
+        // First owner period, closed.
+        let first = create_building_owner(
+            &pool,
+            &building.id,
+            "Deutsche Wohnbau SE",
+            "service@deutsche-wohnbau.example",
+            "1995-01-01",
+            Some("2000-12-31"),
+        )
+        .await
+        .expect("create building owner");
+        assert_eq!(first.name, "Deutsche Wohnbau SE");
+
+        // Owners of a building must tile its timeline: overlapping or gap
+        // periods are rejected.
+        let err = create_building_owner(
+            &pool,
+            &building.id,
+            "Bauverein Ost",
+            "bauverein@example.com",
+            "2000-06-01",
+            Some("2001-12-31"),
+        )
+        .await
+        .expect_err("overlapping building owner must be rejected");
+        assert!(err
+            .as_database_error()
+            .expect("database error")
+            .message()
+            .contains("überschneidet"));
+        let err = create_building_owner(
+            &pool,
+            &building.id,
+            "Bauverein Ost",
+            "bauverein@example.com",
+            "2001-03-01",
+            Some("2005-12-31"),
+        )
+        .await
+        .expect_err("gapped building owner must be rejected");
+        assert!(err
+            .as_database_error()
+            .expect("database error")
+            .message()
+            .contains("Tag nach dem Ende"));
+
+        // Tiled successors: a second period (closed), then a third period
+        // that is open-ended and thus covers today (the current owner).
+        let second = create_building_owner(
+            &pool,
+            &building.id,
+            "Bauverein Ost",
+            "bauverein@example.com",
+            "2001-01-01",
+            Some("2005-12-31"),
+        )
+        .await
+        .expect("create tiled building owner");
+        let third = create_building_owner(
+            &pool,
+            &building.id,
+            "Wohnen am Ring GmbH",
+            "verwaltung@wohnen-am-ring.example",
+            "2006-01-01",
+            None,
+        )
+        .await
+        .expect("create open-ended building owner");
+        let current = get_current_building_owner(&pool, &building.id)
+            .await
+            .expect("current building owner")
+            .expect("open-ended owner covers today");
+        assert_eq!(current.id, third.id);
+
+        let list = list_building_owners(&pool, &building.id)
+            .await
+            .expect("list building owners");
+        assert_eq!(list.len(), 3);
+
+        let updated = update_building_owner(
+            &pool,
+            &first.id,
+            "Deutsche Wohnbau AG",
+            "service@deutsche-wohnbau.example",
+            "1995-01-01",
+            Some("2000-12-31"),
+        )
+        .await
+        .expect("update building owner");
+        assert_eq!(updated.name, "Deutsche Wohnbau AG");
+
+        // A period between two others cannot be deleted (no holes in the
+        // chain); the first and the last period can.
+        let err = delete_building_owner(&pool, &second.id)
+            .await
+            .expect_err("middle period must be protected");
+        assert!(err
+            .as_database_error()
+            .expect("database error")
+            .message()
+            .contains("zwischen zwei anderen"));
+        assert!(delete_building_owner(&pool, &first.id)
+            .await
+            .expect("delete building owner"));
+        assert!(delete_building_owner(&pool, &third.id)
+            .await
+            .expect("delete building owner"));
+        // The protected middle period is still there.
+        let list = list_building_owners(&pool, &building.id)
+            .await
+            .expect("list building owners after delete");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, second.id);
+    }
+
+    #[tokio::test]
+    async fn building_owner_covers_apartments_without_ownership() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory");
+
+        migrate(&pool).await.expect("migrate");
+
+        let building = create_building(&pool, "Test Building", "", "Alice", "alice@example.com")
+            .await
+            .expect("create building");
+
+        // Without a building owner the apartment is rejected…
+        let err = create_apartment_building_owned(&pool, &building.id, "EG", "")
+            .await
+            .expect_err("apartment without any owner must be rejected");
+        assert!(err
+            .as_database_error()
+            .expect("database error")
+            .message()
+            .contains("Eigentum"));
+
+        // …with a covering building owner it is accepted without ownership.
+        create_building_owner(
+            &pool,
+            &building.id,
+            "Deutsche Wohnbau SE",
+            "service@deutsche-wohnbau.example",
+            "1995-01-01",
+            None,
+        )
+        .await
+        .expect("create building owner");
+        let apt = create_apartment_building_owned(&pool, &building.id, "EG links", "")
+            .await
+            .expect("apartment covered by building owner");
+        assert_eq!(apt.name, "EG links");
+        assert!(
+            list_ownerships(&pool, &apt.id)
+                .await
+                .expect("list ownerships")
+                .is_empty(),
+            "the apartment has no per-apartment ownership"
+        );
+
+        // The last building owner cannot be deleted while an apartment depends
+        // on it.
+        let owner_id = list_building_owners(&pool, &building.id)
+            .await
+            .expect("list building owners")[0]
+            .id
+            .clone();
+        let err = delete_building_owner(&pool, &owner_id)
+            .await
+            .expect_err("last needed building owner must be protected");
+        assert!(err
+            .as_database_error()
+            .expect("database error")
+            .message()
+            .contains("letzte Gebäudeeigentümer"));
+
+        // Once the apartment has its own ownership, the guard lets go: the
+        // building owner may be deleted and the apartment stays owned.
+        create_ownership(
+            &pool,
+            &apt.id,
+            "Eigentümer GmbH",
+            "eigentuemer@example.com",
+            "2020-01-01",
+            None,
+        )
+        .await
+        .expect("create ownership");
+        assert!(delete_building_owner(&pool, &owner_id)
+            .await
+            .expect("delete building owner"));
+    }
+
+    #[tokio::test]
+    async fn last_apartment_ownership_deletable_with_building_owner() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory");
+
+        migrate(&pool).await.expect("migrate");
+
+        let building = create_building(&pool, "Test Building", "", "Alice", "alice@example.com")
+            .await
+            .expect("create building");
+        let apt = create_apartment(
+            &pool,
+            &building.id,
+            "EG",
+            "",
+            &NewOwner {
+                name: "Alice",
+                email: "alice@example.com",
+                start_date: "2024-01-01",
+                end_date: None,
+            },
+        )
+        .await
+        .expect("create apartment");
+
+        // No building owner: the last ownership is protected (as before).
+        let owners = list_ownerships(&pool, &apt.id)
+            .await
+            .expect("list ownerships");
+        assert!(
+            delete_ownership(&pool, &owners[0].id).await.is_err(),
+            "last ownership is protected without a building owner"
+        );
+
+        // With a covering building owner the last ownership may be deleted.
+        create_building_owner(
+            &pool,
+            &building.id,
+            "Deutsche Wohnbau SE",
+            "service@deutsche-wohnbau.example",
+            "1995-01-01",
+            None,
+        )
+        .await
+        .expect("create building owner");
+        assert!(delete_ownership(&pool, &owners[0].id)
+            .await
+            .expect("last ownership deletable with building owner"));
+        assert!(
+            list_ownerships(&pool, &apt.id)
+                .await
+                .expect("list ownerships")
+                .is_empty(),
+            "apartment now relies on the building owner"
+        );
     }
 }

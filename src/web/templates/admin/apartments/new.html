@@ -25,18 +25,22 @@
     </label>
 
     <h2 class="section-title">Erster Eigentümer</h2>
+    {% if has_building_owner %}
+    <p class="muted">Das Gebäude hat einen Eigentümer – lassen Sie die Felder leer, wenn die Wohnung zum Gebäudeeigentümer gehört.</p>
+    {% else %}
     <p class="muted">Eine Wohnung braucht immer mindestens einen Eigentümer; der erste wird zusammen mit der Wohnung angelegt.</p>
+    {% endif %}
     <label class="field">
       Name
-      <input type="text" name="owner_name" value="{{ owner_name }}" required />
+      <input type="text" name="owner_name" value="{{ owner_name }}"{% if !has_building_owner %} required{% endif %} />
     </label>
     <label class="field">
       E-Mail
-      <input type="email" name="owner_email" value="{{ owner_email }}" required />
+      <input type="email" name="owner_email" value="{{ owner_email }}"{% if !has_building_owner %} required{% endif %} />
     </label>
     <label class="field">
       Eigentum ab
-      <input type="date" name="owner_start_date" value="{{ owner_start_date }}" required />
+      <input type="date" name="owner_start_date" value="{{ owner_start_date }}"{% if !has_building_owner %} required{% endif %} />
     </label>
     <label class="field">
       Eigentum bis <span class="hint">(optional)</span>

@@ -30,6 +30,17 @@ pub struct Apartment {
 }
 
 #[derive(sqlx::FromRow, Debug, Clone)]
+pub struct BuildingOwner {
+    pub id: String,
+    pub building_id: String,
+    pub name: String,
+    pub email: String,
+    pub start_date: String,
+    pub end_date: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(sqlx::FromRow, Debug, Clone)]
 pub struct Ownership {
     pub id: String,
     pub apartment_id: String,

@@ -307,6 +307,151 @@ async fn create_building_apartment_owner_tenancy_flow() {
     );
 }
 
+/// A building can have a single owner for the whole building (one entity owns
+/// all flats, e.g. a housing company). Its apartments then need no individual
+/// ownership record, and the Kehrwoche falls to the building owner unless a
+/// tenant covers the week.
+#[tokio::test]
+async fn building_owner_flow() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    let building_id = create_building(&h, &client, "Musterblock").await;
+
+    // The building page offers to add a building owner.
+    let detail = basic_auth(client.get(format!("{}/admin/buildings/{building_id}", h.base_url)))
+        .send()
+        .await
+        .expect("fetch building detail");
+    assert_eq!(detail.status(), StatusCode::OK);
+    let body = detail.text().await.expect("building detail body");
+    assert!(
+        body.contains("Gebäudeeigentümer"),
+        "building owner section on detail page, got {body:?}"
+    );
+    assert!(body.contains("building_owners/new"), "add-owner link");
+
+    // Add the building owner via the dedicated form.
+    let create = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/building_owners",
+        h.base_url
+    )))
+    .form(&[
+        ("name", "Deutsche Wohnbau SE"),
+        ("email", "service@deutsche-wohnbau.example"),
+        ("start_date", "1995-01-01"),
+    ])
+    .send()
+    .await
+    .expect("create building owner");
+    assert_eq!(
+        create.status(),
+        StatusCode::SEE_OTHER,
+        "create building owner redirects"
+    );
+    assert_eq!(
+        create
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok()),
+        Some(format!("/admin/buildings/{building_id}").as_str())
+    );
+
+    // The building page lists the owner.
+    let detail = basic_auth(client.get(format!("{}/admin/buildings/{building_id}", h.base_url)))
+        .send()
+        .await
+        .expect("fetch building detail");
+    let body = detail.text().await.expect("building detail body");
+    assert!(
+        body.contains("Deutsche Wohnbau SE"),
+        "building owner listed, got {body:?}"
+    );
+    assert!(
+        body.contains("service@deutsche-wohnbau.example"),
+        "building owner e-mail listed"
+    );
+
+    // The apartment form is aware of the building owner (owner fields no
+    // longer required), and the apartment can be created without an owner.
+    let new_page = basic_auth(client.get(format!(
+        "{}/admin/buildings/{building_id}/apartments/new",
+        h.base_url
+    )))
+    .send()
+    .await
+    .expect("fetch new apartment page");
+    assert_eq!(new_page.status(), StatusCode::OK);
+    let new_body = new_page.text().await.expect("new apartment body");
+    assert!(
+        new_body.contains("Gebäudeeigentümer gehört"),
+        "hint that the apartment may belong to the building owner, got {new_body:?}"
+    );
+
+    let resp = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/apartments",
+        h.base_url
+    )))
+    .form(&[
+        ("name", "EG links"),
+        ("description", ""),
+        ("owner_name", ""),
+        ("owner_email", ""),
+        ("owner_start_date", ""),
+    ])
+    .send()
+    .await
+    .expect("create apartment without owner");
+    assert_eq!(
+        resp.status(),
+        StatusCode::SEE_OTHER,
+        "building-owned apartment creation redirects"
+    );
+
+    // The apartment's owner is the building owner; a tenant covers the week
+    // and takes over the Kehrwoche.
+    let apartment_id = queries::list_apartments(&h.pool, &building_id)
+        .await
+        .expect("list apartments")[0]
+        .id
+        .clone();
+    assert_eq!(
+        queries::list_ownerships(&h.pool, &apartment_id)
+            .await
+            .expect("list ownerships")
+            .len(),
+        0,
+        "building-owned apartment has no individual ownership"
+    );
+    basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/apartments/{apartment_id}/tenancies",
+        h.base_url
+    )))
+    .form(&[
+        ("name", "Ronny Mieter"),
+        ("email", "ronny@example.com"),
+        ("start_date", "2026-01-01"),
+    ])
+    .send()
+    .await
+    .expect("create tenancy");
+
+    // The schedule preview lists the tenant as assignee (delegated).
+    let schedule = basic_auth(client.get(format!(
+        "{}/admin/buildings/{building_id}/schedule",
+        h.base_url
+    )))
+    .send()
+    .await
+    .expect("fetch schedule");
+    assert_eq!(schedule.status(), StatusCode::OK);
+    let schedule_body = schedule.text().await.expect("schedule body");
+    assert!(
+        schedule_body.contains("Ronny Mieter"),
+        "tenant delegated in schedule, got {schedule_body:?}"
+    );
+}
+
 /// Dragging the drag handle ("⋮⋮") reorders apartments: Sortable.js moves the
 /// row and dispatches an `end` event (htmx pattern "drag-to-reorder"), which
 /// htmx turns into a POST of the hidden `item` inputs as repeated form fields
