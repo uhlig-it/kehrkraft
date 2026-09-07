@@ -16,14 +16,13 @@
 </div>
 
 <section class="card">
-  <p class="muted">
-    PDF für Bewohner:
-    <a href="/p/{{ building.secret_slug }}/kehrwoche.pdf"><code class="code">/p/{{ building.secret_slug }}/kehrwoche.pdf</code></a>
-  </p>
-  <p class="muted">
-    Kalender-Feed für Bewohner:
-    <a href="/p/{{ building.secret_slug }}/kehrwoche.ics"><code class="code">/p/{{ building.secret_slug }}/kehrwoche.ics</code></a>
-  </p>
+  <div class="card-header">
+    <h2>Bewohner-Links</h2>
+    <div class="card-header-actions">
+      <a class="btn btn-secondary" href="/p/{{ building.secret_slug }}/kehrwoche.pdf" target="_blank" rel="noopener">Plan als öffentliches PDF</a>
+      <a class="btn btn-secondary" href="/p/{{ building.secret_slug }}/kehrwoche.ics">öffentlicher iCal-Feed</a>
+    </div>
+  </div>
 
   <table class="table table-compact">
     <thead>

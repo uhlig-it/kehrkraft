@@ -16,12 +16,12 @@
     <td class="col-drag">
       <span class="drag-handle" title="Zum Sortieren ziehen">⋮⋮</span>
     </td>
-    <td>
+    <td data-label="Name">
       <span class="floor-plate" aria-hidden="true">{{ a.plate }}</span>
       <a class="link-strong" href="/admin/buildings/{{ building.id }}/apartments/{{ a.apartment.id }}">{{ a.apartment.name }}</a>
       <span class="badge badge-muted">Rotation {{ a.rotation }}</span>
     </td>
-    <td>{{ a.apartment.description }}</td>
+    <td data-label="Beschreibung">{{ a.apartment.description }}</td>
     <td class="col-actions">
       <input type="hidden" name="item" value="{{ a.apartment.id }}" />
       <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ a.apartment.id }}/delete"

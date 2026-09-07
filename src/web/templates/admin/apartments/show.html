@@ -35,10 +35,10 @@
     <tbody>
     {% for o in ownerships %}
       <tr>
-        <td>{{ o.name }}</td>
-        <td>{{ o.email }}</td>
-        <td>{{ o.start_date }}</td>
-        <td>{% if o.end_date.is_some() %}{{ o.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
+        <td data-label="Name">{{ o.name }}</td>
+        <td data-label="E-Mail">{{ o.email }}</td>
+        <td data-label="Beginn">{{ o.start_date }}</td>
+        <td data-label="Ende">{% if o.end_date.is_some() %}{{ o.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
         <td class="col-actions">
           <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ o.id }}/edit">Bearbeiten</a>
           <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ o.id }}/delete"
@@ -99,10 +99,10 @@
     <tbody>
     {% for t in tenancies %}
       <tr>
-        <td>{{ t.name }}</td>
-        <td>{{ t.email }}</td>
-        <td>{{ t.start_date }}</td>
-        <td>{% if t.end_date.is_some() %}{{ t.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
+        <td data-label="Name">{{ t.name }}</td>
+        <td data-label="E-Mail">{{ t.email }}</td>
+        <td data-label="Beginn">{{ t.start_date }}</td>
+        <td data-label="Ende">{% if t.end_date.is_some() %}{{ t.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
         <td class="col-actions">
           <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ t.id }}/edit">Bearbeiten</a>
           <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ t.id }}/delete"

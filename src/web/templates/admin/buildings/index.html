@@ -19,15 +19,15 @@
     <thead>
       <tr>
         <th>Name</th>
-        <th>Öffentlicher PDF-Link</th>
+        <th>Beschreibung</th>
         <th class="col-actions"></th>
       </tr>
     </thead>
     <tbody>
     {% for b in buildings %}
       <tr>
-        <td><a class="link-strong" href="/admin/buildings/{{ b.id }}">{{ b.name }}</a></td>
-        <td><a href="/p/{{ b.secret_slug }}/kehrwoche.pdf"><code class="code">/p/{{ b.secret_slug }}/kehrwoche.pdf</code></a></td>
+        <td data-label="Name"><a class="link-strong" href="/admin/buildings/{{ b.id }}">{{ b.name }}</a></td>
+        <td data-label="Beschreibung">{{ b.description }}</td>
         <td class="col-actions">
           <form class="inline" method="post" action="/admin/buildings/{{ b.id }}/delete"
                 hx-post="/admin/buildings/{{ b.id }}/delete"
