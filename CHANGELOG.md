@@ -3,7 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 <!-- git-cliff: end of header -->
-## [0.5.0] - 2026-09-07
+## [0.5.1] - 2026-09-07
 
 ### Added
 
@@ -24,6 +24,38 @@ All notable changes to this project will be documented in this file.
 - Release 0.4.0
 - Release 0.4.0
 - Release 0.4.0
+- *(deps)* Update rust crate tracing-subscriber to v0.3.23 (#6)
+- *(deps)* Update rust crate askama to v0.16.1 (#13)
+- Release 0.5.0
+
+### Fixed
+
+- Accept apartment edit form without owner fields
+- Fixup! Update TODOs
+- Renumber backup canary migration to 0006
+
+### Other
+
+- Fix Renovate lookup for rustsec/audit-check pin
+- Remove plan that was long implemented
+- Fix release script
+
+## [0.5.0] - 2026-09-07
+
+### Added
+
+- Add iCal feed for the Kehrwoche schedule
+- Polish resident links and PDF logo
+- Expose rotation seed in the admin danger zone
+- Make buildings editable including their Ansprechpartner
+- Make the admin UI responsive on mobile
+- Allow a single owner for an entire building
+- Hourly encrypted S3 backups (port of sqlite-vault)
+- Normalize owners, tenants and admins into people; enforce ownership structure
+
+### Changed
+
+- *(deps)* Update rust crate serde to v1.0.229 (#5)
 
 ### Fixed
 
