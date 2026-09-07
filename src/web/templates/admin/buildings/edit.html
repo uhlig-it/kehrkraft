@@ -28,13 +28,15 @@
       <legend>Ansprechpartner <span class="hint">(optional)</span></legend>
       <label class="field">
         Name
-        <input type="text" name="admin_name" value="{{ admin_name }}" />
+        <input type="text" name="admin_name" id="building-admin-name" list="people-names"
+               data-email-field="building-admin-email" value="{{ admin_name }}" />
       </label>
       <label class="field">
         E-Mail
-        <input type="email" name="admin_email" value="{{ admin_email }}" />
+        <input type="email" name="admin_email" id="building-admin-email" list="people-emails"
+               value="{{ admin_email }}" />
       </label>
-      <p class="muted">Beide Felder leer lassen, um den bisherigen Ansprechpartner zu behalten.</p>
+      <p class="muted">Beide Felder leer lassen, um den bisherigen Ansprechpartner zu behalten. Bekannte Personen erscheinen bei der Eingabe als Vorschlag; dieselbe E-Mail-Adresse bedeutet dieselbe Person.</p>
     </fieldset>
 
     <div class="form-actions">

@@ -608,6 +608,39 @@ details.disclosure form {
   color: var(--text-muted);
 }
 
+.hidden {
+  display: none !important;
+}
+
+/* The people index lists each person's roles; the e-mail column is only
+   shown when the viewport has room for it. */
+.email-if-space {
+  display: none;
+}
+
+@media (min-width: 52em) {
+  .email-if-space {
+    display: table-cell;
+  }
+}
+
+.person-roles-summary {
+  display: block;
+  font-size: 0.9em;
+  margin-top: 0.1rem;
+}
+
+.field-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+}
+
+.field-radio input {
+  margin-top: 0.2rem;
+}
+
 .person-list {
   margin: 0;
   padding-left: 1.25rem;

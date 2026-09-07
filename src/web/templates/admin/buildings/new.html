@@ -28,14 +28,68 @@
       <legend>Ansprechpartner <span class="hint">(optional)</span></legend>
       <label class="field">
         Name
-        <input type="text" name="admin_name" value="{{ admin_name }}" />
+        <input type="text" name="admin_name" id="building-admin-name" list="people-names"
+               data-email-field="building-admin-email" value="{{ admin_name }}" />
       </label>
       <label class="field">
         E-Mail
-        <input type="email" name="admin_email" value="{{ admin_email }}" />
+        <input type="email" name="admin_email" id="building-admin-email" list="people-emails"
+               value="{{ admin_email }}" />
       </label>
-      <p class="muted">Beide Felder leer lassen, wenn es keinen Ansprechpartner geben soll.</p>
+      <p class="muted">Beide Felder leer lassen, wenn es keinen Ansprechpartner geben soll. Bekannte Personen erscheinen bei der Eingabe als Vorschlag; dieselbe E-Mail-Adresse bedeutet dieselbe Person.</p>
     </fieldset>
+
+    <fieldset>
+      <legend>Eigentumsverhältnisse</legend>
+      <p class="muted">Entscheiden Sie sich für eine der beiden Formen – die Aufteilung eines von einer Person besessenen Gebäudes in einzelne Eigentumswohnungen (WEG) wird von Kehrkraft nicht unterstützt.</p>
+      <label class="field-radio">
+        <input type="radio" name="ownership_style" value="apartments"{% if ownership_style != "building" %} checked{% endif %} />
+        <span>Einzelne Wohnungen: Jede Wohnung gehört einer eigenen Person oder Gesellschaft (WEG). Beim Anlegen jeder Wohnung ist ihr erster Eigentümer anzugeben.</span>
+      </label>
+      <label class="field-radio">
+        <input type="radio" name="ownership_style" value="building"{% if ownership_style == "building" %} checked{% endif %} />
+        <span>Ein Gebäudeeigentümer: Eine Person oder Gesellschaft besitzt das ganze Gebäude (z. B. eine Wohnungsgesellschaft). Die Wohnungen gehören dann mit zum Gebäude – einzelne Wohnungseigentümer gibt es nicht.</span>
+      </label>
+      <div id="building-owner-fields"{% if ownership_style != "building" %} class="hidden"{% endif %}>
+        <p class="muted">Wer ist der Gebäudeeigentümer? Bekannte Personen erscheinen bei der Eingabe als Vorschlag; dieselbe E-Mail-Adresse bedeutet dieselbe Person.</p>
+        <label class="field">
+          Name
+          <input type="text" name="owner_name" id="building-owner-name" list="people-names"
+                 data-email-field="building-owner-email" value="{{ owner_name }}" />
+        </label>
+        <label class="field">
+          E-Mail
+          <input type="email" name="owner_email" id="building-owner-email" list="people-emails"
+                 value="{{ owner_email }}" />
+        </label>
+        <label class="field">
+          Eigentum ab
+          <input type="date" name="owner_start_date" value="{{ owner_start_date }}" />
+        </label>
+      </div>
+    </fieldset>
+
+    <script>
+      // Show the owning entity's fields only when the "one building owner"
+      // variant is chosen, and make them required then.
+      (() => {
+        const fields = document.getElementById('building-owner-fields');
+        if (!fields) return;
+        const update = () => {
+          const building = document.querySelector('input[name="ownership_style"]:checked')?.value === 'building';
+          fields.classList.toggle('hidden', !building);
+          for (const input of fields.querySelectorAll('input')) {
+            input.required = building;
+          }
+        };
+        document.querySelectorAll('input[name="ownership_style"]').forEach((radio) => {
+          radio.addEventListener('change', update);
+        });
+        update();
+      })();
+    </script>
+
+    {% include "admin/_people_datalists.html" %}
 
     <div class="form-actions">
       <button type="submit" class="btn btn-primary">Gebäude anlegen</button>

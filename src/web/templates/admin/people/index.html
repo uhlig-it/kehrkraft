@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}Kehrkraft: {{ title }}{% endblock %}
+
+{% block content %}
+<nav class="breadcrumb">
+  <a href="/admin">Gebäude</a><span class="sep">/</span><span>Personen</span>
+</nav>
+
+<div class="page-header">
+  <h1>Personen</h1>
+  <p class="subtitle">Jede Person wird nur einmal geführt – als Eigentümerin oder Eigentümer, Gebäudeeigentümer, Mieterin oder Mieter und Ansprechpartnerin oder Ansprechpartner. Dieselbe E-Mail-Adresse bedeutet dieselbe Person.</p>
+</div>
+
+<section class="card">
+  {% if entries.len() == 0 %}
+  <p class="muted">Noch keine Personen erfasst. Personen entstehen zusammen mit Eigentum, Mietverhältnissen oder Ansprechpartnern.</p>
+  {% else %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th class="email-if-space">E-Mail</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for e in entries %}
+      <tr>
+        <td data-label="Name">
+          <a href="/admin/people/{{ e.person.id }}">{{ e.person.name }}</a>
+          {% if e.roles_summary.len() > 0 %}
+          <span class="muted person-roles-summary">{{ e.roles_summary }}</span>
+          {% endif %}
+        </td>
+        <td class="email-if-space" data-label="E-Mail"><a href="mailto:{{ e.person.email }}">{{ e.person.email }}</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% endblock %}

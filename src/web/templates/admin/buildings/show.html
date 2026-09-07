@@ -17,7 +17,7 @@
     {% endif %}
     {% if admins.len() > 0 %}
     <p class="meta-line">
-      Ansprechpartner:{% for a in admins %}{% if !loop.first %},{% endif %} <a href="mailto:{{ a.email }}">{{ a.name }}</a>{% endfor %}
+      Ansprechpartner:{% for a in admins %}{% if !loop.first %},{% endif %} <a href="/admin/people/{{ a.person_id }}">{{ a.name }}</a> (<a href="mailto:{{ a.email }}">{{ a.email }}</a>){% endfor %}
     </p>
     {% endif %}
   </div>
@@ -94,13 +94,17 @@
 <section class="card">
   <div class="card-header">
     <h2>Gebäudeeigentümer</h2>
+    {% if has_apartment_owners %}
+    <span class="muted">Nicht möglich, solange Wohnungen eigene Eigentümer haben (WEG).</span>
+    {% else %}
     <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/building_owners/new">Eigentümer hinzufügen</a>
+    {% endif %}
   </div>
   {% if building_owners.len() == 0 %}
   <p class="muted">Kein Eigentümer für das gesamte Gebäude erfasst – dann braucht jede Wohnung einen eigenen Eigentümer.</p>
   {% else %}
   <p class="muted">Der Gebäudeeigentümer besitzt alle Wohnungen; einzelne Wohnungseigentümer sind dann nicht erforderlich. Vermietete Wohnungen delegieren die Kehrwoche weiterhin an den Mieter.</p>
-  <table class="table table-compact">
+  <table class="table">
     <thead>
       <tr>
         <th>Name</th>
@@ -113,7 +117,7 @@
     <tbody>
     {% for o in building_owners %}
       <tr>
-        <td data-label="Name">{{ o.name }}</td>
+        <td data-label="Name"><a href="/admin/people/{{ o.person_id }}">{{ o.name }}</a></td>
         <td data-label="E-Mail">{{ o.email }}</td>
         <td data-label="Beginn">{{ o.start_date }}</td>
         <td data-label="Ende">{% if o.end_date.is_some() %}{{ o.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>

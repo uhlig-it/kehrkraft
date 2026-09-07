@@ -6,11 +6,11 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 
 # TODO
 
+* When entering a new owner or tenant, ask if the previous owenship / tenancy, if there is one, shall be ending the day before. Tell the user if she says No, the operation will fail.
 * Internationalization: Keep strings ready for EN/DE; "Kehrwoche" as canonical term. Collect all strings that need translation and suggest German alternatives, so that we can support both languages
 * Support path variables:
   - `TYPST_BIN_PATH` (optional) - Full path to the typst executable that is to be used for generating the PDF invoice. Defaults to the first `typst` in the `$PATH`. If set and non-empty, that value is returned directly. Otherwise, "typst" is found in the system PATH.
   - `TYPST_SPOOL_DIR` (optional) - Path to an existing directory where the typst file for the PDF invoice, together with the JSON containing billing data and the Factur-X XML, will be stored. This contents of this directory are ephemeral, but they may be useful for troubleshooting PDF generation. Defaults to `$TMPDIR`.
-* Create a dedicated page that lists people and their roles (admin, owner, tenant) and link to their objects. Whenever a person occurs in some role on the site, link to the person's page.
 * Reminders that duty is due for a tenant / owner (via forwardemail)
 * Switch to proper auth system
 * Read-only JSON feed for hardware integrations
@@ -20,12 +20,14 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 - A building has a name (max. 30 chars) and description (no limit) and an optional Ansprechpartner (administrator contact; set when creating or editing the building, may be omitted).
 - A building consists of zero or more apartments
 - An apartment has a name (max. 30 chars) and description (no limit). Conversely, an apartment belongs to a building.
-- Each apartment has, at any point in time, an owner (we store name and email). Conversely, an owner might own apartments in zero or more buildings.
+- Owners are persons stored once (name and e-mail, migration 0007): each apartment has, at any point in time, an owner, and an owner may own a whole building, apartments in zero or more buildings, or both (e.g. a housing company with a WEG flat elsewhere). A person is identified by its e-mail address: entering a known e-mail reuses the person instead of creating a duplicate, and correcting name or e-mail updates every record of that person at once.
+- Tenants and Ansprechpartner are persons as well (migration 0008): the same person row backs owner, tenant and administrator roles, so a person may be, say, an owner here and a tenant there. The people pages (`/admin/people`) list everyone with their roles and link to the objects they refer to.
 - Ownership of an apartment has a start date, and an optional end date.
-- An apartment may be rented out to a tenant. For each tenant, we store a name and email address.
+- A building may alternatively be owned by a single entity (one person/company owns all apartments, no Wohnungseigentümergemeinschaft); a building-owner period then covers the whole building and its apartments need no per-apartment ownership records. The ownership structure is chosen when creating the building; the two forms are mutually exclusive and enforced by the database (migration 0010: no ownership record for an apartment of a building with a covering building owner, and no building owner while apartments have owners) — so the structure is fixed once the building exists, and converting a wholly-owned building into individually owned flats (splitting it into a WEG) is not supported and out of scope for now.
+- An apartment may be rented out to a tenant, who is taking over Kehrwoche during their tenancy.
 - Tenancy start date, and an optional end date.
 - At any point in time, not more than one tenancy may be active for an apartment. It might happen that a tenancy ended and no new one exists (yet).
-- At any point in time, not more than one ownership may be active for an apartment, and the ownership periods of an apartment tile its timeline seamlessly: the next ownership starts on the day after the previous one ends (enforced on create/update/delete). This guarantees that an apartment always has an owner and the schedule never has an unassigned week between two owners.
+- At any point in time, not more than one ownership may be active for an apartment, and the ownership periods of an apartment tile its timeline seamlessly: the next ownership starts on the day after the previous one ends (enforced on create/update/delete). This guarantees that an apartment always has an owner and the schedule never has an unassigned week between two owners. Building-owner periods tile the building's timeline the same way.
 - A plan represents the responsibility for stairwell cleaning for a building during a year. The assignment is scheduled per the following rules:
   1. Responsibility is assigned round-robin over the apartments, in the order the apartments were created. The rotation counter continues across years, so the imbalance of years with 53 ISO weeks (one apartment serves one week more) rotates between the apartments over time instead of always hitting the same ones.
   1. Responsibility lasts one week each. It starts Monday 00:00 and ends Sunday 23:59.

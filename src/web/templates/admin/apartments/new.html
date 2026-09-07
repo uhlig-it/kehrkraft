@@ -26,26 +26,30 @@
 
     <h2 class="section-title">Erster Eigentümer</h2>
     {% if has_building_owner %}
-    <p class="muted">Das Gebäude hat einen Eigentümer – lassen Sie die Felder leer, wenn die Wohnung zum Gebäudeeigentümer gehört.</p>
+    <p class="muted">Das Gebäude gehört als Ganzes dem Gebäudeeigentümer – die Wohnung hat daher keinen eigenen Eigentümer. Einzelne Wohnungseigentümer gibt es erst, wenn das Gebäude in Wohnungseigentum aufgeteilt wird (WEG); das unterstützt Kehrkraft nicht.</p>
     {% else %}
     <p class="muted">Eine Wohnung braucht immer mindestens einen Eigentümer; der erste wird zusammen mit der Wohnung angelegt.</p>
-    {% endif %}
     <label class="field">
       Name
-      <input type="text" name="owner_name" value="{{ owner_name }}"{% if !has_building_owner %} required{% endif %} />
+      <input type="text" name="owner_name" id="apartment-owner-name" list="people-names"
+             data-email-field="apartment-owner-email" value="{{ owner_name }}" required />
     </label>
     <label class="field">
       E-Mail
-      <input type="email" name="owner_email" value="{{ owner_email }}"{% if !has_building_owner %} required{% endif %} />
+      <input type="email" name="owner_email" id="apartment-owner-email" list="people-emails"
+             value="{{ owner_email }}" required />
     </label>
     <label class="field">
       Eigentum ab
-      <input type="date" name="owner_start_date" value="{{ owner_start_date }}"{% if !has_building_owner %} required{% endif %} />
+      <input type="date" name="owner_start_date" value="{{ owner_start_date }}" required />
     </label>
     <label class="field">
       Eigentum bis <span class="hint">(optional)</span>
       <input type="date" name="owner_end_date" value="{% if let Some(ed) = owner_end_date %}{{ ed }}{% endif %}" />
     </label>
+    <p class="muted">Bekannte Eigentümer erscheinen bei der Eingabe als Vorschlag; dieselbe E-Mail-Adresse bedeutet dieselbe Person.</p>
+    {% include "admin/_people_datalists.html" %}
+    {% endif %}
 
     <div class="form-actions">
       <button type="submit" class="btn btn-primary">Wohnung anlegen</button>

@@ -15,14 +15,17 @@
 <div class="card">
   {% include "admin/_error.html" %}
   <form method="post" action="{{ action }}">
+    <p class="muted">Name und E-Mail-Adresse gehören zur Person und gelten damit für alle Zeiträume, in denen sie als Eigentümerin oder Eigentümer geführt wird. Ein neues „Eigentum ab“ muss an den vorherigen Gebäudeeigentümer anschließen.</p>
     <label class="field">
       Name
-      <input type="text" name="name" value="{{ form.name }}" required />
+      <input type="text" name="name" id="building-owner-name" list="people-names"
+             data-email-field="building-owner-email" value="{{ form.name }}" required />
     </label>
 
     <label class="field">
       E-Mail
-      <input type="email" name="email" value="{{ form.email }}" required />
+      <input type="email" name="email" id="building-owner-email" list="people-emails"
+             value="{{ form.email }}" required />
     </label>
 
     <label class="field">
@@ -40,5 +43,7 @@
       <a class="btn btn-secondary" href="{{ cancel_url }}">Abbrechen</a>
     </div>
   </form>
+
+  {% include "admin/_people_datalists.html" %}
 </div>
 {% endblock %}

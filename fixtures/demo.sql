@@ -12,17 +12,21 @@
 -- Idempotent: on re-run it first deletes the demo rows, then recreates them.
 -- Other data is left untouched.
 --
--- Requires the schema from migrations 0001-0005; the app applies them
+-- Requires the schema from migrations 0001-0008; the app applies them
 -- automatically on startup. See README ("Demo data") for loading steps.
 --
--- The inserts run in one transaction: the ownerships FK is deferred and the
+-- The inserts run in one transaction: owners, tenants and Ansprechpartner are
+-- stored once per person in `people` (migrations 0007/0008) and referenced by
+-- the period tables via person_id. The ownerships FK is deferred and the
 -- database requires an ownership row – or a covering building owner, see
 -- migration 0005 – to exist before an apartment can be inserted
 -- (`apartments_require_ownership` trigger), so ownerships and building owners
 -- come first. The deletes go through the building's cascade, which removes
--- the ownerships, building owners and tenancies together with their
+-- the ownerships, building owners, tenancies and admins together with their
 -- apartments (the delete guards of 0004/0005 only fire while the parent row
--- still exists, so they let the cascades pass).
+-- still exists, so they let the cascades pass); people that no record
+-- references anymore are removed by the cleanup triggers of 0007/0008, so
+-- re-running the fixture stays idempotent for the person rows as well.
 
 PRAGMA foreign_keys = ON;
 
@@ -34,12 +38,16 @@ DELETE FROM buildings WHERE id IN ('building-treehouse', 'building-elbphilharmon
 -- 1. Baumhaus (treehouse), unchanged.
 -- ---------------------------------------------------------------------------
 
--- Building with its administrator (contact): Bart Simpson
+-- Building with its administrator (contact): Bart Simpson. He is also the
+-- tenant of the roof floor (below) — one person row for both roles.
 INSERT INTO buildings (id, name, description, secret_slug)
 VALUES ('building-treehouse', 'Baumhaus', 'Barts Baumhaus hinter der 742 Evergreen Terrace – mit Klimaanlage und Aussicht auf Springfield.', 'LIwSIy5r0G4lSdwQwZbZbK');
 
-INSERT INTO building_administrators (id, building_id, name, email)
-VALUES ('admin-bart', 'building-treehouse', 'Bart Simpson', 'bart.simpson@example.com');
+INSERT INTO people (id, name, email)
+VALUES ('person-bart', 'Bart Simpson', 'bart.simpson@example.com');
+
+INSERT INTO building_administrators (id, building_id, person_id)
+VALUES ('admin-bart', 'building-treehouse', 'person-bart');
 
 -- Apartments in their manual order (position 1-4, top floor first: Dach,
 -- 1. Stock, Erdgeschoß, Souterrain), each with an open-ended ownership
@@ -47,12 +55,19 @@ VALUES ('admin-bart', 'building-treehouse', 'Bart Simpson', 'bart.simpson@exampl
 -- were created (all inserted in one statement, so the deterministic tie-break
 -- is the id): basement, first, ground, roof. The roof floor is rented to Bart
 -- Simpson, so the scheduler delegates roof duty to him.
-INSERT INTO ownerships (id, apartment_id, name, email, start_date)
+INSERT INTO people (id, name, email)
 VALUES
-    ('ownership-macdougal', 'apartment-basement', 'Dr. William MacDougal III', 'willie.macdougal@example.com', '2026-01-01'),
-    ('ownership-homer',     'apartment-ground',   'Homer Simpson',             'homer.simpson@example.com',    '2026-01-01'),
-    ('ownership-krabappel', 'apartment-first',    'Edna Krabappel-Flanders',   'krabby@example.com',           '2026-01-01'),
-    ('ownership-burns',     'apartment-roof',     'Charles Montgomery Burns',  'monty@example.com',            '2026-01-01');
+    ('person-macdougal', 'Dr. William MacDougal III', 'willie.macdougal@example.com'),
+    ('person-homer',     'Homer Simpson',             'homer.simpson@example.com'),
+    ('person-krabappel', 'Edna Krabappel-Flanders',   'krabby@example.com'),
+    ('person-burns',     'Charles Montgomery Burns',  'monty@example.com');
+
+INSERT INTO ownerships (id, apartment_id, person_id, start_date)
+VALUES
+    ('ownership-macdougal', 'apartment-basement', 'person-macdougal', '2026-01-01'),
+    ('ownership-homer',     'apartment-ground',   'person-homer',     '2026-01-01'),
+    ('ownership-krabappel', 'apartment-first',    'person-krabappel', '2026-01-01'),
+    ('ownership-burns',     'apartment-roof',     'person-burns',     '2026-01-01');
 
 INSERT INTO apartments (id, building_id, name, description, position)
 VALUES
@@ -61,8 +76,8 @@ VALUES
     ('apartment-first',    'building-treehouse', '1. Stock',      'Frau Krabappels Rückzugsort: hellhörig, aber leise – jede Störung wird mit einem „Ha!“ quittiert.', 2),
     ('apartment-roof',     'building-treehouse', 'Dachgeschoss',  'Barts Zimmer unterm Dach: Skateboard-Stellplatz, Klimaanlage und freie Sicht aufs ganze Viertel.', 1);
 
-INSERT INTO tenancies (id, apartment_id, name, email, start_date)
-VALUES ('tenancy-bart-roof', 'apartment-roof', 'Bart Simpson', 'bart.simpson@example.com', '2026-01-01');
+INSERT INTO tenancies (id, apartment_id, person_id, start_date)
+VALUES ('tenancy-bart-roof', 'apartment-roof', 'person-bart', '2026-01-01');
 
 -- ---------------------------------------------------------------------------
 -- 2. Elbphilharmonie
@@ -78,19 +93,33 @@ VALUES ('tenancy-bart-roof', 'apartment-roof', 'Bart Simpson', 'bart.simpson@exa
 INSERT INTO buildings (id, name, description, secret_slug)
 VALUES ('building-elbphilharmonie', 'Elbphilharmonie', 'Die „Elphi“ an der Norderelbe: Konzerthaus, Hotel und exklusive Eigentumswohnungen über der Plaza – hier wohnt Hamburgs Prominenz hinter Glasfassade und Sicherheitsschleuse.', 'EDhvCHki1cnD_BeKzpbcCww');
 
-INSERT INTO building_administrators (id, building_id, name, email)
-VALUES ('admin-elphi-verwaltung', 'building-elbphilharmonie', 'Hausverwaltung Hafenkrone GmbH', 'verwaltung@hafenkrone.example');
+INSERT INTO people (id, name, email)
+VALUES ('person-elphi-verwaltung', 'Hausverwaltung Hafenkrone GmbH', 'verwaltung@hafenkrone.example');
 
-INSERT INTO ownerships (id, apartment_id, name, email, start_date)
+INSERT INTO building_administrators (id, building_id, person_id)
+VALUES ('admin-elphi-verwaltung', 'building-elbphilharmonie', 'person-elphi-verwaltung');
+
+INSERT INTO people (id, name, email)
 VALUES
-    ('ownership-elphi-1', 'apartment-elphi-1', 'Prof. Dr. h.c. mult. Günter Klatsch', 'guenter.klatsch@example.com',    '2016-01-01'),
-    ('ownership-elphi-2', 'apartment-elphi-2', 'Dr. Anita Alsterblick',              'anita.alsterblick@example.com',   '2016-01-01'),
-    ('ownership-elphi-3', 'apartment-elphi-3', 'Udo Hafen, Dr. h.c.',                'udo.hafen@example.com',           '2017-01-01'),
-    ('ownership-elphi-4', 'apartment-elphi-4', 'Prof. Dr. Knut Nebel',               'knut.nebel@example.com',          '2017-01-01'),
-    ('ownership-elphi-5', 'apartment-elphi-5', 'Dr. Bastian Brandung',               'bastian.brandung@example.com',    '2016-01-01'),
-    ('ownership-elphi-6', 'apartment-elphi-6', 'Univ.-Prof. Dr. Elke Sturmflut',     'elke.sturmflut@example.com',      '2017-01-01'),
-    ('ownership-elphi-7', 'apartment-elphi-7', 'Sönke Sandbank, Dr. med. h.c.',      'soenke.sandbank@example.com',     '2016-01-01'),
-    ('ownership-elphi-8', 'apartment-elphi-8', 'Marlene Möwe, Prof. h.c.',           'marlene.moewe@example.com',       '2017-01-01');
+    ('person-elphi-1', 'Prof. Dr. h.c. mult. Günter Klatsch', 'guenter.klatsch@example.com'),
+    ('person-elphi-2', 'Dr. Anita Alsterblick',              'anita.alsterblick@example.com'),
+    ('person-elphi-3', 'Udo Hafen, Dr. h.c.',                'udo.hafen@example.com'),
+    ('person-elphi-4', 'Prof. Dr. Knut Nebel',               'knut.nebel@example.com'),
+    ('person-elphi-5', 'Dr. Bastian Brandung',               'bastian.brandung@example.com'),
+    ('person-elphi-6', 'Univ.-Prof. Dr. Elke Sturmflut',     'elke.sturmflut@example.com'),
+    ('person-elphi-7', 'Sönke Sandbank, Dr. med. h.c.',      'soenke.sandbank@example.com'),
+    ('person-elphi-8', 'Marlene Möwe, Prof. h.c.',           'marlene.moewe@example.com');
+
+INSERT INTO ownerships (id, apartment_id, person_id, start_date)
+VALUES
+    ('ownership-elphi-1', 'apartment-elphi-1', 'person-elphi-1', '2016-01-01'),
+    ('ownership-elphi-2', 'apartment-elphi-2', 'person-elphi-2', '2016-01-01'),
+    ('ownership-elphi-3', 'apartment-elphi-3', 'person-elphi-3', '2017-01-01'),
+    ('ownership-elphi-4', 'apartment-elphi-4', 'person-elphi-4', '2017-01-01'),
+    ('ownership-elphi-5', 'apartment-elphi-5', 'person-elphi-5', '2016-01-01'),
+    ('ownership-elphi-6', 'apartment-elphi-6', 'person-elphi-6', '2017-01-01'),
+    ('ownership-elphi-7', 'apartment-elphi-7', 'person-elphi-7', '2016-01-01'),
+    ('ownership-elphi-8', 'apartment-elphi-8', 'person-elphi-8', '2017-01-01');
 
 INSERT INTO apartments (id, building_id, name, description, position)
 VALUES
@@ -104,12 +133,19 @@ VALUES
     ('apartment-elphi-8', 'building-elbphilharmonie', 'Plaza-Blick',       'Im 9. Obergeschoss direkt über der Plaza: abends Konzertbesucher als Vorgarten, morgens Ruhe und Espresso auf der Terrasse.',                            8);
 
 -- Rented out to invented B-list celebrities (about half of the flats).
-INSERT INTO tenancies (id, apartment_id, name, email, start_date)
+INSERT INTO people (id, name, email)
 VALUES
-    ('tenancy-elphi-2', 'apartment-elphi-2', 'Sandra Sunshine',      'sandra.sunshine@example.com',      '2019-05-01'),
-    ('tenancy-elphi-4', 'apartment-elphi-4', 'Kevin Feuerstein',     'kevin.feuerstein@example.com',     '2021-02-01'),
-    ('tenancy-elphi-7', 'apartment-elphi-7', 'Ronny Peppermint',     'ronny.peppermint@example.com',     '2022-11-01'),
-    ('tenancy-elphi-8', 'apartment-elphi-8', 'Jacqueline Sterni',    'jacqueline.sterni@example.com',    '2018-09-01');
+    ('person-elphi-tenant-2', 'Sandra Sunshine',   'sandra.sunshine@example.com'),
+    ('person-elphi-tenant-4', 'Kevin Feuerstein',  'kevin.feuerstein@example.com'),
+    ('person-elphi-tenant-7', 'Ronny Peppermint',  'ronny.peppermint@example.com'),
+    ('person-elphi-tenant-8', 'Jacqueline Sterni', 'jacqueline.sterni@example.com');
+
+INSERT INTO tenancies (id, apartment_id, person_id, start_date)
+VALUES
+    ('tenancy-elphi-2', 'apartment-elphi-2', 'person-elphi-tenant-2', '2019-05-01'),
+    ('tenancy-elphi-4', 'apartment-elphi-4', 'person-elphi-tenant-4', '2021-02-01'),
+    ('tenancy-elphi-7', 'apartment-elphi-7', 'person-elphi-tenant-7', '2022-11-01'),
+    ('tenancy-elphi-8', 'apartment-elphi-8', 'person-elphi-tenant-8', '2018-09-01');
 
 -- ---------------------------------------------------------------------------
 -- 3. Haus 12, Am Platz der Jugend
@@ -130,12 +166,18 @@ VALUES
 INSERT INTO buildings (id, name, description, secret_slug)
 VALUES ('building-haus-12', 'Haus 12, Am Platz der Jugend', 'WBS-70-Plattenbau mit 11 Geschossen, errichtet 1986 am Platz der Jugend in einer fiktiven ostdeutschen Plattenbausiedlung: Balkone gen Osten, Blick auf Garagenhof und Konsum. Das ganze Haus gehört der Deutschen Wohnbau SE – und jeder Mieter kennt seine Kehrwoche.', 'G4h0ev2OwIPFjf-eT_WHoww');
 
-INSERT INTO building_administrators (id, building_id, name, email)
-VALUES ('admin-haus-12-dw', 'building-haus-12', 'Doreen Ludwig, Objektbetreuung Deutsche Wohnbau SE', 'doreen.ludwig@deutsche-wohnbau.example');
+INSERT INTO people (id, name, email)
+VALUES ('person-hh-doreen', 'Doreen Ludwig, Objektbetreuung Deutsche Wohnbau SE', 'doreen.ludwig@deutsche-wohnbau.example');
+
+INSERT INTO building_administrators (id, building_id, person_id)
+VALUES ('admin-haus-12-dw', 'building-haus-12', 'person-hh-doreen');
 
 -- The one owner of the whole building; covers today and the future.
-INSERT INTO building_owners (id, building_id, name, email, start_date)
-VALUES ('building-owner-haus-12-dw', 'building-haus-12', 'Deutsche Wohnbau SE', 'service@deutsche-wohnbau.example', '1995-01-01');
+INSERT INTO people (id, name, email)
+VALUES ('person-haus-12-dw', 'Deutsche Wohnbau SE', 'service@deutsche-wohnbau.example');
+
+INSERT INTO building_owners (id, building_id, person_id, start_date)
+VALUES ('building-owner-haus-12-dw', 'building-haus-12', 'person-haus-12-dw', '1995-01-01');
 
 INSERT INTO apartments (id, building_id, name, description, position)
 VALUES
@@ -173,40 +215,76 @@ VALUES
     ('apartment-hh-10-mitte',   'building-haus-12', '10. OG, Mitte',       'Oberste Wohnung, beste Aussicht: zwei Zimmer, zwei Balkone und ein Fernblick, für den anderswo Miete fällig wäre.', 2),
     ('apartment-hh-10-rechts',  'building-haus-12', '10. OG, rechts',      'Zehnter Stock, Südseite: hier wacht die Sonne zuerst auf, und der Fernblick reicht bis zum Hochsitz des Jägervereins.', 3);
 
-INSERT INTO tenancies (id, apartment_id, name, email, start_date)
+INSERT INTO people (id, name, email)
 VALUES
-    ('tenancy-hh-00-links',   'apartment-hh-00-links',   'Ronny & Mandy Schiller',    'ronny.schiller@example.com',     '1996-03-15'),
-    ('tenancy-hh-00-mitte',   'apartment-hh-00-mitte',   'Maik Giese',                 'maik.giese@example.com',         '2001-08-01'),
-    ('tenancy-hh-00-rechts',  'apartment-hh-00-rechts',  'Doreen & Frank Krüger',      'doreen.krueger@example.com',     '1997-01-10'),
-    ('tenancy-hh-01-links',   'apartment-hh-01-links',   'Sandy Lehmann',              'sandy.lehmann@example.com',      '2003-05-12'),
-    ('tenancy-hh-01-mitte',   'apartment-hh-01-mitte',   'Jacqueline Wünsche',         'jacqueline.wuensche@example.com','2010-09-01'),
-    ('tenancy-hh-01-rechts',  'apartment-hh-01-rechts',  'Ramona & Uwe Henke',         'ramona.henke@example.com',       '1995-11-02'),
-    ('tenancy-hh-02-links',   'apartment-hh-02-links',   'Kati Marquardt',             'kati.marquardt@example.com',     '2008-04-21'),
-    ('tenancy-hh-02-mitte',   'apartment-hh-02-mitte',   'Silvio & Steffi Neumann',    'silvio.neumann@example.com',     '1999-07-16'),
-    ('tenancy-hh-02-rechts',  'apartment-hh-02-rechts',  'Bärbel Noack',               'baerbel.noack@example.com',      '2006-12-01'),
-    ('tenancy-hh-03-links',   'apartment-hh-03-links',   'Torsten Kroll',              'torsten.kroll@example.com',      '2013-06-17'),
-    ('tenancy-hh-03-mitte',   'apartment-hh-03-mitte',   'Mirko & Antje Vogler',       'mirko.vogler@example.com',       '1998-03-09'),
-    ('tenancy-hh-03-rechts',  'apartment-hh-03-rechts',  'Grit Schulze',               'grit.schulze@example.com',       '2000-10-23'),
-    ('tenancy-hh-04-links',   'apartment-hh-04-links',   'Jörg & Petra Lenz',          'joerg.lenz@example.com',         '2004-02-02'),
-    ('tenancy-hh-04-mitte',   'apartment-hh-04-mitte',   'Nadine & Mario Wolf',        'nadine.wolf@example.com',        '2012-08-27'),
-    ('tenancy-hh-04-rechts',  'apartment-hh-04-rechts',  'Holger Seifert',             'holger.seifert@example.com',     '1996-09-30'),
-    ('tenancy-hh-05-links',   'apartment-hh-05-links',   'Ingo & Heike Brandt',        'ingo.brandt@example.com',        '2007-03-05'),
-    ('tenancy-hh-05-mitte',   'apartment-hh-05-mitte',   'Manuela Richter',            'manuela.richter@example.com',    '2014-11-11'),
-    ('tenancy-hh-05-rechts',  'apartment-hh-05-rechts',  'Sven & Katrin Winter',       'sven.winter@example.com',        '2002-05-13'),
-    ('tenancy-hh-06-links',   'apartment-hh-06-links',   'Rico & Doreen Otto',         'rico.otto@example.com',          '1997-08-18'),
-    ('tenancy-hh-06-mitte',   'apartment-hh-06-mitte',   'Steffi Krause',              'steffi.krause@example.com',      '2005-01-31'),
-    ('tenancy-hh-06-rechts',  'apartment-hh-06-rechts',  'Karsten & Sylke Pohl',       'karsten.pohl@example.com',       '2009-07-07'),
-    ('tenancy-hh-07-links',   'apartment-hh-07-links',   'Mandy Böhme',                'mandy.boehme@example.com',       '2016-04-04'),
-    ('tenancy-hh-07-mitte',   'apartment-hh-07-mitte',   'Maik & Ramona Jäger',        'maik.jaeger@example.com',        '2001-12-03'),
-    ('tenancy-hh-07-rechts',  'apartment-hh-07-rechts',  'Peggy Werner',               'peggy.werner@example.com',       '2011-10-10'),
-    ('tenancy-hh-08-links',   'apartment-hh-08-links',   'René & Birgit Lorenz',       'rene.lorenz@example.com',        '1998-06-22'),
-    ('tenancy-hh-08-mitte',   'apartment-hh-08-mitte',   'Cindy Schubert',             'cindy.schubert@example.com',     '2015-03-16'),
-    ('tenancy-hh-08-rechts',  'apartment-hh-08-rechts',  'Mario & Manuela Hartmann',   'mario.hartmann@example.com',     '2003-09-29'),
-    ('tenancy-hh-09-links',   'apartment-hh-09-links',   'Antje Fischer',              'antje.fischer@example.com',      '2007-11-26'),
-    ('tenancy-hh-09-mitte',   'apartment-hh-09-mitte',   'Jens & Peggy Wendt',         'jens.wendt@example.com',         '1996-01-08'),
-    ('tenancy-hh-09-rechts',  'apartment-hh-09-rechts',  'Sylke Hartwig',              'sylke.hartwig@example.com',      '2012-02-14'),
-    ('tenancy-hh-10-links',   'apartment-hh-10-links',   'Ronny Lehmann',              'ronny.lehmann@example.com',      '2008-08-08'),
-    ('tenancy-hh-10-mitte',   'apartment-hh-10-mitte',   'Katrin & Jörg Schönfeld',    'katrin.schoenfeld@example.com',  '2000-04-25'),
-    ('tenancy-hh-10-rechts',  'apartment-hh-10-rechts',  'Steffi & Mirko Bastian',     'steffi.bastian@example.com',     '2017-05-22');
+    ('person-hh-00-links',   'Ronny & Mandy Schiller',    'ronny.schiller@example.com'),
+    ('person-hh-00-mitte',   'Maik Giese',                'maik.giese@example.com'),
+    ('person-hh-00-rechts',  'Doreen & Frank Krüger',     'doreen.krueger@example.com'),
+    ('person-hh-01-links',   'Sandy Lehmann',             'sandy.lehmann@example.com'),
+    ('person-hh-01-mitte',   'Jacqueline Wünsche',        'jacqueline.wuensche@example.com'),
+    ('person-hh-01-rechts',  'Ramona & Uwe Henke',        'ramona.henke@example.com'),
+    ('person-hh-02-links',   'Kati Marquardt',            'kati.marquardt@example.com'),
+    ('person-hh-02-mitte',   'Silvio & Steffi Neumann',   'silvio.neumann@example.com'),
+    ('person-hh-02-rechts',  'Bärbel Noack',              'baerbel.noack@example.com'),
+    ('person-hh-03-links',   'Torsten Kroll',             'torsten.kroll@example.com'),
+    ('person-hh-03-mitte',   'Mirko & Antje Vogler',      'mirko.vogler@example.com'),
+    ('person-hh-03-rechts',  'Grit Schulze',              'grit.schulze@example.com'),
+    ('person-hh-04-links',   'Jörg & Petra Lenz',         'joerg.lenz@example.com'),
+    ('person-hh-04-mitte',   'Nadine & Mario Wolf',       'nadine.wolf@example.com'),
+    ('person-hh-04-rechts',  'Holger Seifert',            'holger.seifert@example.com'),
+    ('person-hh-05-links',   'Ingo & Heike Brandt',       'ingo.brandt@example.com'),
+    ('person-hh-05-mitte',   'Manuela Richter',           'manuela.richter@example.com'),
+    ('person-hh-05-rechts',  'Sven & Katrin Winter',      'sven.winter@example.com'),
+    ('person-hh-06-links',   'Rico & Doreen Otto',        'rico.otto@example.com'),
+    ('person-hh-06-mitte',   'Steffi Krause',             'steffi.krause@example.com'),
+    ('person-hh-06-rechts',  'Karsten & Sylke Pohl',      'karsten.pohl@example.com'),
+    ('person-hh-07-links',   'Mandy Böhme',               'mandy.boehme@example.com'),
+    ('person-hh-07-mitte',   'Maik & Ramona Jäger',       'maik.jaeger@example.com'),
+    ('person-hh-07-rechts',  'Peggy Werner',              'peggy.werner@example.com'),
+    ('person-hh-08-links',   'René & Birgit Lorenz',      'rene.lorenz@example.com'),
+    ('person-hh-08-mitte',   'Cindy Schubert',            'cindy.schubert@example.com'),
+    ('person-hh-08-rechts',  'Mario & Manuela Hartmann',  'mario.hartmann@example.com'),
+    ('person-hh-09-links',   'Antje Fischer',             'antje.fischer@example.com'),
+    ('person-hh-09-mitte',   'Jens & Peggy Wendt',        'jens.wendt@example.com'),
+    ('person-hh-09-rechts',  'Sylke Hartwig',             'sylke.hartwig@example.com'),
+    ('person-hh-10-links',   'Ronny Lehmann',             'ronny.lehmann@example.com'),
+    ('person-hh-10-mitte',   'Katrin & Jörg Schönfeld',   'katrin.schoenfeld@example.com'),
+    ('person-hh-10-rechts',  'Steffi & Mirko Bastian',    'steffi.bastian@example.com');
+
+INSERT INTO tenancies (id, apartment_id, person_id, start_date)
+VALUES
+    ('tenancy-hh-00-links',   'apartment-hh-00-links',   'person-hh-00-links',   '1996-03-15'),
+    ('tenancy-hh-00-mitte',   'apartment-hh-00-mitte',   'person-hh-00-mitte',   '2001-08-01'),
+    ('tenancy-hh-00-rechts',  'apartment-hh-00-rechts',  'person-hh-00-rechts',  '1997-01-10'),
+    ('tenancy-hh-01-links',   'apartment-hh-01-links',   'person-hh-01-links',   '2003-05-12'),
+    ('tenancy-hh-01-mitte',   'apartment-hh-01-mitte',   'person-hh-01-mitte',   '2010-09-01'),
+    ('tenancy-hh-01-rechts',  'apartment-hh-01-rechts',  'person-hh-01-rechts',  '1995-11-02'),
+    ('tenancy-hh-02-links',   'apartment-hh-02-links',   'person-hh-02-links',   '2008-04-21'),
+    ('tenancy-hh-02-mitte',   'apartment-hh-02-mitte',   'person-hh-02-mitte',   '1999-07-16'),
+    ('tenancy-hh-02-rechts',  'apartment-hh-02-rechts',  'person-hh-02-rechts',  '2006-12-01'),
+    ('tenancy-hh-03-links',   'apartment-hh-03-links',   'person-hh-03-links',   '2013-06-17'),
+    ('tenancy-hh-03-mitte',   'apartment-hh-03-mitte',   'person-hh-03-mitte',   '1998-03-09'),
+    ('tenancy-hh-03-rechts',  'apartment-hh-03-rechts',  'person-hh-03-rechts',  '2000-10-23'),
+    ('tenancy-hh-04-links',   'apartment-hh-04-links',   'person-hh-04-links',   '2004-02-02'),
+    ('tenancy-hh-04-mitte',   'apartment-hh-04-mitte',   'person-hh-04-mitte',   '2012-08-27'),
+    ('tenancy-hh-04-rechts',  'apartment-hh-04-rechts',  'person-hh-04-rechts',  '1996-09-30'),
+    ('tenancy-hh-05-links',   'apartment-hh-05-links',   'person-hh-05-links',   '2007-03-05'),
+    ('tenancy-hh-05-mitte',   'apartment-hh-05-mitte',   'person-hh-05-mitte',   '2014-11-11'),
+    ('tenancy-hh-05-rechts',  'apartment-hh-05-rechts',  'person-hh-05-rechts',  '2002-05-13'),
+    ('tenancy-hh-06-links',   'apartment-hh-06-links',   'person-hh-06-links',   '1997-08-18'),
+    ('tenancy-hh-06-mitte',   'apartment-hh-06-mitte',   'person-hh-06-mitte',   '2005-01-31'),
+    ('tenancy-hh-06-rechts',  'apartment-hh-06-rechts',  'person-hh-06-rechts',  '2009-07-07'),
+    ('tenancy-hh-07-links',   'apartment-hh-07-links',   'person-hh-07-links',   '2016-04-04'),
+    ('tenancy-hh-07-mitte',   'apartment-hh-07-mitte',   'person-hh-07-mitte',   '2001-12-03'),
+    ('tenancy-hh-07-rechts',  'apartment-hh-07-rechts',  'person-hh-07-rechts',  '2011-10-10'),
+    ('tenancy-hh-08-links',   'apartment-hh-08-links',   'person-hh-08-links',   '1998-06-22'),
+    ('tenancy-hh-08-mitte',   'apartment-hh-08-mitte',   'person-hh-08-mitte',   '2015-03-16'),
+    ('tenancy-hh-08-rechts',  'apartment-hh-08-rechts',  'person-hh-08-rechts',  '2003-09-29'),
+    ('tenancy-hh-09-links',   'apartment-hh-09-links',   'person-hh-09-links',   '2007-11-26'),
+    ('tenancy-hh-09-mitte',   'apartment-hh-09-mitte',   'person-hh-09-mitte',   '1996-01-08'),
+    ('tenancy-hh-09-rechts',  'apartment-hh-09-rechts',  'person-hh-09-rechts',  '2012-02-14'),
+    ('tenancy-hh-10-links',   'apartment-hh-10-links',   'person-hh-10-links',   '2008-08-08'),
+    ('tenancy-hh-10-mitte',   'apartment-hh-10-mitte',   'person-hh-10-mitte',   '2000-04-25'),
+    ('tenancy-hh-10-rechts',  'apartment-hh-10-rechts',  'person-hh-10-rechts',  '2017-05-22');
 
 COMMIT;

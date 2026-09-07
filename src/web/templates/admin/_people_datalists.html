@@ -1,0 +1,14 @@
+{# Suggestion lists of the known owners (people); include once per page, on
+the pages that collect owner name/e-mail. The name options carry the
+person's e-mail so base.html's small script can fill the e-mail field when a
+name is picked. #}
+<datalist id="people-names">
+  {% for p in people %}
+  <option value="{{ p.name }}" data-email="{{ p.email }}"></option>
+  {% endfor %}
+</datalist>
+<datalist id="people-emails">
+  {% for p in people %}
+  <option value="{{ p.email }}"></option>
+  {% endfor %}
+</datalist>

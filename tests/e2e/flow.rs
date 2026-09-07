@@ -372,8 +372,9 @@ async fn building_owner_flow() {
         "building owner e-mail listed"
     );
 
-    // The apartment form is aware of the building owner (owner fields no
-    // longer required), and the apartment can be created without an owner.
+    // The apartment form is aware of the building owner: it no longer offers
+    // the owner fields at all (the apartment belongs to the building as a
+    // whole), and the apartment can be created without an owner.
     let new_page = basic_auth(client.get(format!(
         "{}/admin/buildings/{building_id}/apartments/new",
         h.base_url
@@ -384,8 +385,12 @@ async fn building_owner_flow() {
     assert_eq!(new_page.status(), StatusCode::OK);
     let new_body = new_page.text().await.expect("new apartment body");
     assert!(
-        new_body.contains("Gebäudeeigentümer gehört"),
-        "hint that the apartment may belong to the building owner, got {new_body:?}"
+        new_body.contains("gehört als Ganzes dem Gebäudeeigentümer"),
+        "explanation that the apartment has no own owner, got {new_body:?}"
+    );
+    assert!(
+        !new_body.contains(r#"name="owner_name""#),
+        "no owner fields for a wholly-owned building, got {new_body:?}"
     );
 
     let resp = basic_auth(client.post(format!(
@@ -449,6 +454,827 @@ async fn building_owner_flow() {
     assert!(
         schedule_body.contains("Ronny Mieter"),
         "tenant delegated in schedule, got {schedule_body:?}"
+    );
+}
+
+/// One person can own a whole building AND an apartment in another building
+/// (WEG): both roles share a single `people` row, resolved by e-mail. The
+/// building form collects the initial building owner inline (no separate
+/// owner-creation step), and renaming the person through one period updates
+/// every period at once.
+#[tokio::test]
+async fn owner_person_is_shared_across_building_and_apartment() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    // The new-building form offers the ownership structure as a visual
+    // choice and known owners as suggestions.
+    let form = basic_auth(client.get(format!("{}/admin/buildings/new", h.base_url)))
+        .send()
+        .await
+        .expect("fetch new-building page");
+    let form_body = form.text().await.expect("new-building body");
+    assert!(
+        form_body.contains("ownership_style"),
+        "ownership-structure radio group, got {form_body:?}"
+    );
+    assert!(
+        form_body.contains("Gebäudeeigentümer"),
+        "owner option, got {form_body:?}"
+    );
+    assert!(
+        form_body.contains(r#"<datalist id="people-names">"#),
+        "suggestion list on the new-building form"
+    );
+
+    // Create the building together with its owner — one form, one step.
+    let created = basic_auth(client.post(format!("{}/admin/buildings", h.base_url)))
+        .form(&[
+            ("name", "Wohnblock am Park"),
+            ("description", ""),
+            ("admin_name", "Alice"),
+            ("admin_email", "alice@example.com"),
+            ("ownership_style", "building"),
+            ("owner_name", "Deutsche Wohnbau SE"),
+            ("owner_email", "service@deutsche-wohnbau.example"),
+            ("owner_start_date", "1995-01-01"),
+        ])
+        .send()
+        .await
+        .expect("create building with owner");
+    assert_eq!(
+        created.status(),
+        StatusCode::SEE_OTHER,
+        "building with owner redirects"
+    );
+    let location = created
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .expect("Location header")
+        .to_string();
+    let building_id = location.trim_start_matches("/admin/buildings/").to_string();
+
+    let people = queries::list_people(&h.pool).await.expect("list people");
+    // The Ansprechpartner (Alice) is a person too since 0008; the building
+    // owner is a second person row.
+    assert_eq!(people.len(), 2, "admin + building owner, got {people:?}");
+    let owner_person = people
+        .iter()
+        .find(|p| p.email == "service@deutsche-wohnbau.example")
+        .expect("building-owner person");
+    assert_eq!(owner_person.name, "Deutsche Wohnbau SE");
+
+    // The building page shows the owner; the apartment form is aware of it.
+    let page = basic_auth(client.get(format!("{}/admin/buildings/{building_id}", h.base_url)))
+        .send()
+        .await
+        .expect("fetch building page");
+    let body = page.text().await.expect("building body");
+    assert!(
+        body.contains("Deutsche Wohnbau SE"),
+        "building owner listed, got {body:?}"
+    );
+
+    // The dedicated building-owner form renders with the suggestion lists
+    // (it loads the person master data like the other owner forms).
+    let owner_form = basic_auth(client.get(format!(
+        "{}/admin/buildings/{building_id}/building_owners/new",
+        h.base_url
+    )))
+    .send()
+    .await
+    .expect("fetch building-owner form")
+    .text()
+    .await
+    .expect("building-owner form body");
+    assert!(
+        owner_form.contains(r#"<datalist id="people-names">"#),
+        "suggestion list on the building-owner form, got {owner_form:?}"
+    );
+
+    // The same person owns an apartment in a second building (a WEG). The
+    // person is reused via the e-mail address; the newer name becomes the
+    // person's current contact name.
+    let second_building = create_building(&h, &client, "Musterblock").await;
+    let apartment = basic_auth(client.post(format!(
+        "{}/admin/buildings/{second_building}/apartments",
+        h.base_url
+    )))
+    .form(&[
+        ("name", "EG links"),
+        ("description", ""),
+        ("owner_name", "Deutsche Wohnbau AG"),
+        ("owner_email", "service@deutsche-wohnbau.example"),
+        ("owner_start_date", "2026-01-01"),
+    ])
+    .send()
+    .await
+    .expect("create apartment with known owner");
+    assert_eq!(apartment.status(), StatusCode::SEE_OTHER);
+
+    let people = queries::list_people(&h.pool).await.expect("list people");
+    assert_eq!(
+        people.len(),
+        2,
+        "same e-mail must not create a second person, got {people:?}"
+    );
+    assert_eq!(
+        people
+            .iter()
+            .find(|p| p.email == "service@deutsche-wohnbau.example")
+            .expect("owner person")
+            .name,
+        "Deutsche Wohnbau AG"
+    );
+
+    // Both the building-owner period and the apartment ownership point at the
+    // same person row.
+    let building_owners = queries::list_building_owners(&h.pool, &building_id)
+        .await
+        .expect("list building owners");
+    assert_eq!(building_owners.len(), 1);
+    let apartment_id = queries::list_apartments(&h.pool, &second_building)
+        .await
+        .expect("list apartments")[0]
+        .id
+        .clone();
+    let ownerships = queries::list_ownerships(&h.pool, &apartment_id)
+        .await
+        .expect("list ownerships");
+    assert_eq!(ownerships.len(), 1);
+    assert_eq!(building_owners[0].person_id, ownerships[0].person_id);
+    assert_eq!(building_owners[0].name, "Deutsche Wohnbau AG");
+
+    // The ownership edit page renders with the suggestion lists and the
+    // person's current name pre-filled.
+    let ownership_edit = basic_auth(client.get(format!(
+        "{}/admin/buildings/{second_building}/apartments/{apartment_id}/ownerships/{}/edit",
+        h.base_url, ownerships[0].id
+    )))
+    .send()
+    .await
+    .expect("fetch ownership edit page")
+    .text()
+    .await
+    .expect("ownership edit body");
+    assert!(
+        ownership_edit.contains(r#"<datalist id="people-names">"#),
+        "suggestion list on the ownership edit page, got {ownership_edit:?}"
+    );
+    assert!(
+        ownership_edit.contains("Deutsche Wohnbau AG"),
+        "person name pre-filled"
+    );
+    // The building page (which shows the building owner) reflects the shared
+    // person's current name.
+    let page = basic_auth(client.get(format!("{}/admin/buildings/{building_id}", h.base_url)))
+        .send()
+        .await
+        .expect("fetch building page");
+    assert!(
+        page.text()
+            .await
+            .expect("building body")
+            .contains("Deutsche Wohnbau AG"),
+        "building page shows the person's current name"
+    );
+
+    // Renaming the person through the building owner edit updates the
+    // apartment's ownership listing as well.
+    let owner_id = &building_owners[0].id;
+    let rename = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/building_owners/{owner_id}",
+        h.base_url
+    )))
+    .form(&[
+        ("name", "Deutsche Wohnbau SE & Co. KG"),
+        ("email", "service@deutsche-wohnbau.example"),
+        ("start_date", "1995-01-01"),
+        ("end_date", ""),
+    ])
+    .send()
+    .await
+    .expect("rename building owner");
+    assert_eq!(rename.status(), StatusCode::SEE_OTHER);
+
+    let ownerships = queries::list_ownerships(&h.pool, &apartment_id)
+        .await
+        .expect("list ownerships after rename");
+    assert_eq!(ownerships[0].name, "Deutsche Wohnbau SE & Co. KG");
+    let page = basic_auth(client.get(format!(
+        "{}/admin/buildings/{second_building}/apartments/{apartment_id}",
+        h.base_url
+    )))
+    .send()
+    .await
+    .expect("fetch apartment page");
+    assert!(
+        page.text()
+            .await
+            .expect("apartment body")
+            .contains("Deutsche Wohnbau SE &#38; Co. KG"),
+        "apartment page shows the renamed person (HTML-escaped)"
+    );
+    assert_eq!(
+        queries::list_people(&h.pool)
+            .await
+            .expect("list people")
+            .len(),
+        2,
+        "rename keeps the two person rows (admin + owner)"
+    );
+}
+
+/// The people pages list every person with their roles and link to the
+/// objects they refer to — the Ansprechpartner, building owner, apartment
+/// owner and tenant views all point at the same person row.
+#[tokio::test]
+async fn people_page_lists_roles_and_links() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    let building_id = create_building(&h, &client, "Haus Sonnenschein").await;
+    let apartment_id = create_apartment(&h, &client, &building_id, "EG links").await;
+    let apt_url = format!(
+        "{}/admin/buildings/{building_id}/apartments/{apartment_id}",
+        h.base_url
+    );
+
+    // A tenant whose e-mail matches the apartment's first owner, so that one
+    // person back two roles. The building owner lives in a second, wholly-
+    // owned building: the two ownership forms are mutually exclusive.
+    let owned_id = create_building(&h, &client, "Geschäftshaus").await;
+    basic_auth(client.post(format!(
+        "{}/admin/buildings/{owned_id}/building_owners",
+        h.base_url
+    )))
+    .form(&[
+        ("name", "Deutsche Wohnbau SE"),
+        ("email", "service@deutsche-wohnbau.example"),
+        ("start_date", "1995-01-01"),
+    ])
+    .send()
+    .await
+    .expect("create building owner");
+    basic_auth(client.post(format!("{apt_url}/tenancies")))
+        .form(&[
+            ("name", "Ursprünglicher Eigentümer"),
+            ("email", "urspruenglich@example.com"),
+            ("start_date", "2026-02-01"),
+        ])
+        .send()
+        .await
+        .expect("create tenancy");
+
+    // Alice (the Ansprechpartner), the owner/tenant person, and the building
+    // owner company "Deutsche Wohnbau SE"".
+    let people = queries::list_people(&h.pool).await.expect("list people");
+    assert_eq!(
+        people.len(),
+        3,
+        "roles of three distinct persons, got {people:?}"
+    );
+
+    // The index lists everyone, linking to the detail pages.
+    let index = basic_auth(client.get(format!("{}/admin/people", h.base_url)))
+        .send()
+        .await
+        .expect("fetch people index");
+    assert_eq!(index.status(), StatusCode::OK);
+    let index_body = index.text().await.expect("people index body");
+    for name in ["Alice", "Ursprünglicher Eigentümer", "Deutsche Wohnbau SE"] {
+        assert!(
+            index_body.contains(name),
+            "{name} listed, got {index_body:?}"
+        );
+    }
+    assert!(
+        index_body.contains("/admin/people/"),
+        "index links to the detail pages, got {index_body:?}"
+    );
+    // The index lists roles instead of the e-mail; the e-mail is only in the
+    // markup for wide viewports.
+    assert!(
+        index_body.contains("Ansprechpartner von Haus Sonnenschein"),
+        "roles summarized on the index, got {index_body:?}"
+    );
+    assert!(
+        index_body.contains("Eigentümer von EG links"),
+        "apartment-owner role in the summary, got {index_body:?}"
+    );
+    assert!(
+        index_body.contains(r#"class="email-if-space""#),
+        "e-mail column only rendered for wide viewports, got {index_body:?}"
+    );
+
+    // The apartment page links owner and tenant names to their person pages.
+    let apartment = basic_auth(client.get(apt_url.clone()))
+        .send()
+        .await
+        .expect("fetch apartment page")
+        .text()
+        .await
+        .expect("apartment body");
+    assert!(
+        apartment.contains("/admin/people/") && apartment.contains("Ursprünglicher Eigentümer"),
+        "apartment roles link to the person page, got {apartment:?}"
+    );
+
+    // The person page of the owner/tenant person shows both roles with links
+    // to the objects.
+    let person = people
+        .iter()
+        .find(|p| p.name == "Ursprünglicher Eigentümer")
+        .expect("owner/tenant person");
+    let detail = basic_auth(client.get(format!("{}/admin/people/{}", h.base_url, person.id)))
+        .send()
+        .await
+        .expect("fetch person page");
+    assert_eq!(detail.status(), StatusCode::OK);
+    let detail_body = detail.text().await.expect("person page body");
+    assert!(
+        detail_body.contains("Eigentümer von") && detail_body.contains("Mieter von"),
+        "both roles listed, got {detail_body:?}"
+    );
+    assert!(
+        detail_body.contains(&format!(
+            "/admin/buildings/{building_id}/apartments/{apartment_id}"
+        )),
+        "role links to the apartment page, got {detail_body:?}"
+    );
+
+    // The building pages link the Ansprechpartner and the building owner to
+    // their person pages.
+    let building = basic_auth(client.get(format!("{}/admin/buildings/{building_id}", h.base_url)))
+        .send()
+        .await
+        .expect("fetch building page")
+        .text()
+        .await
+        .expect("building body");
+    assert!(
+        building.contains("/admin/people/") && building.contains("Alice"),
+        "Ansprechpartner links to the person page, got {building:?}"
+    );
+    let owned_building =
+        basic_auth(client.get(format!("{}/admin/buildings/{owned_id}", h.base_url)))
+            .send()
+            .await
+            .expect("fetch owned building page")
+            .text()
+            .await
+            .expect("owned building body");
+    assert!(
+        owned_building.contains("/admin/people/") && owned_building.contains("Deutsche Wohnbau SE"),
+        "building owner links to the person page, got {owned_building:?}"
+    );
+
+    // A person page of the company person renders its building-owner role.
+    let company = people
+        .iter()
+        .find(|p| p.name == "Deutsche Wohnbau SE")
+        .expect("company person");
+    let company_page =
+        basic_auth(client.get(format!("{}/admin/people/{}", h.base_url, company.id)))
+            .send()
+            .await
+            .expect("fetch company person page")
+            .text()
+            .await
+            .expect("company person body");
+    assert!(
+        company_page.contains("Gebäudeeigentümer von") && company_page.contains("Geschäftshaus"),
+        "building-owner role listed, got {company_page:?}"
+    );
+    assert!(
+        company_page.contains("seit 1995-01-01"),
+        "open period shown"
+    );
+
+    // Unknown person ids 404.
+    let missing = basic_auth(client.get(format!("{}/admin/people/does-not-exist", h.base_url)))
+        .send()
+        .await
+        .expect("fetch unknown person");
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+}
+
+/// The person page's contact form edits name and e-mail directly: the change
+/// takes effect everywhere the person appears (ownership, tenancy, admin),
+/// and an e-mail that already belongs to another person is rejected.
+#[tokio::test]
+async fn person_can_be_edited_via_its_page() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    let building_id = create_building(&h, &client, "Haus Sonnenschein").await;
+    let apartment_id = create_apartment(&h, &client, &building_id, "EG links").await;
+    let apt_url = format!(
+        "{}/admin/buildings/{building_id}/apartments/{apartment_id}",
+        h.base_url
+    );
+
+    // The page of the Ansprechpartner shows the contact form.
+    let alice = queries::list_people(&h.pool)
+        .await
+        .expect("list people")
+        .into_iter()
+        .find(|p| p.email == "alice@example.com")
+        .expect("Alice person");
+    let page = basic_auth(client.get(format!("{}/admin/people/{}", h.base_url, alice.id)))
+        .send()
+        .await
+        .expect("fetch person page");
+    let page_body = page.text().await.expect("person page body");
+    assert!(
+        page_body.contains("Kontaktdaten") && page_body.contains(r#"value="Alice""#),
+        "contact form with the current name, got {page_body:?}"
+    );
+
+    // Rename the person via the form; the building page and the apartment
+    // page follow, because all roles share the person row.
+    let rename = basic_auth(client.post(format!("{}/admin/people/{}", h.base_url, alice.id)))
+        .form(&[("name", "Alice Liddell"), ("email", "alice@example.com")])
+        .send()
+        .await
+        .expect("rename person");
+    assert_eq!(
+        rename.status(),
+        StatusCode::SEE_OTHER,
+        "person update redirects back to the person page"
+    );
+    assert_eq!(
+        rename
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok()),
+        Some(format!("/admin/people/{}", alice.id).as_str())
+    );
+
+    let building = basic_auth(client.get(format!("{}/admin/buildings/{building_id}", h.base_url)))
+        .send()
+        .await
+        .expect("fetch building page")
+        .text()
+        .await
+        .expect("building body");
+    assert!(
+        building.contains("Alice Liddell"),
+        "renamed Ansprechpartner on the building page, got {building:?}"
+    );
+
+    // The person page itself shows the new name in the header and the form.
+    let page = basic_auth(client.get(format!("{}/admin/people/{}", h.base_url, alice.id)))
+        .send()
+        .await
+        .expect("fetch person page")
+        .text()
+        .await
+        .expect("person page body");
+    assert!(
+        page.contains("Alice Liddell") && page.contains(r#"value="alice@example.com""#),
+        "renamed person on its page, got {page:?}"
+    );
+
+    // An e-mail that belongs to another person is rejected inline.
+    let owner = queries::list_people(&h.pool)
+        .await
+        .expect("list people")
+        .into_iter()
+        .find(|p| p.email == "urspruenglich@example.com")
+        .expect("owner person");
+    let conflict = basic_auth(client.post(format!("{}/admin/people/{}", h.base_url, alice.id)))
+        .form(&[
+            ("name", "Alice Liddell"),
+            ("email", "urspruenglich@example.com"),
+        ])
+        .send()
+        .await
+        .expect("conflicting person update");
+    assert_eq!(
+        conflict.status(),
+        StatusCode::BAD_REQUEST,
+        "an e-mail of another person must be rejected"
+    );
+    let conflict_body = conflict.text().await.expect("conflict body");
+    assert!(
+        conflict_body.contains("existiert bereits"),
+        "duplicate e-mail message shown inline, got {conflict_body:?}"
+    );
+    assert!(
+        conflict_body.contains(r#"value="urspruenglich@example.com""#),
+        "submitted values preserved after the rejection, got {conflict_body:?}"
+    );
+
+    // Alice is unchanged (the person page still shows the old values).
+    let alice_after = queries::get_person(&h.pool, &alice.id)
+        .await
+        .expect("get person")
+        .expect("Alice exists");
+    assert_eq!(alice_after.name, "Alice Liddell");
+    assert_eq!(alice_after.email, "alice@example.com");
+
+    // A malformed address is rejected with the database's message as well;
+    // the owner person is untouched and still the same row.
+    let malformed = basic_auth(client.post(format!("{}/admin/people/{}", h.base_url, owner.id)))
+        .form(&[
+            ("name", "Ursprünglicher Eigentümer"),
+            ("email", "no-at.example"),
+        ])
+        .send()
+        .await
+        .expect("malformed person update");
+    assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        malformed
+            .text()
+            .await
+            .expect("malformed body")
+            .contains("E-Mail-Adresse"),
+        "malformed e-mail message shown inline"
+    );
+    assert_eq!(
+        queries::list_people(&h.pool)
+            .await
+            .expect("list people")
+            .len(),
+        2
+    );
+
+    // The apartment page still shows the owner's name from the shared row.
+    let apartment = basic_auth(client.get(apt_url.clone()))
+        .send()
+        .await
+        .expect("fetch apartment page")
+        .text()
+        .await
+        .expect("apartment body");
+    assert!(
+        apartment.contains("Ursprünglicher Eigentümer"),
+        "owner unchanged, got {apartment:?}"
+    );
+}
+
+/// The ownership structure is a visual choice when creating a building:
+/// either one owner for the whole building (then the apartments legally have
+/// no own owners, and the apartment page does not offer "Eigentümer
+/// hinzufügen") or individually owned flats (WEG). Owner fields submitted
+/// with the WEG variant are ignored.
+#[tokio::test]
+async fn building_ownership_choice_governs_the_apartment_page() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    // The form offers both variants; the owner fields are hidden behind the
+    // "one building owner" choice (default: individually owned flats).
+    let form = basic_auth(client.get(format!("{}/admin/buildings/new", h.base_url)))
+        .send()
+        .await
+        .expect("fetch new-building page")
+        .text()
+        .await
+        .expect("new-building body");
+    assert!(
+        form.contains(r#"<input type="radio" name="ownership_style" value="apartments" checked"#),
+        "apartments variant preselected, got {form:?}"
+    );
+    assert!(
+        form.contains(r#"id="building-owner-fields" class="hidden""#),
+        "owner fields hidden for the apartments variant, got {form:?}"
+    );
+
+    let create = |fields: &[(&str, &str)]| {
+        let mut all = vec![
+            ("name", "Testhaus"),
+            ("description", ""),
+            ("admin_name", ""),
+            ("admin_email", ""),
+        ];
+        all.extend_from_slice(fields);
+        basic_auth(client.post(format!("{}/admin/buildings", h.base_url)))
+            .form(&all)
+            .send()
+    };
+
+    // WEG variant: apartments get their own owners and the apartment page
+    // offers "Eigentümer hinzufügen".
+    let weg = create(&[("ownership_style", "apartments")])
+        .await
+        .expect("create WEG building");
+    assert_eq!(weg.status(), StatusCode::SEE_OTHER);
+    let weg_id = weg
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .expect("Location")
+        .trim_start_matches("/admin/buildings/")
+        .to_string();
+    let apartment_id = create_apartment(&h, &client, &weg_id, "EG links").await;
+    let weg_apt = basic_auth(client.get(format!(
+        "{}/admin/buildings/{weg_id}/apartments/{apartment_id}",
+        h.base_url
+    )))
+    .send()
+    .await
+    .expect("fetch WEG apartment page")
+    .text()
+    .await
+    .expect("WEG apartment body");
+    assert!(
+        weg_apt.contains("Eigentümer hinzufügen"),
+        "per-apartment owners offered for the WEG variant, got {weg_apt:?}"
+    );
+
+    // Because the flats are individually owned, the building page must not
+    // offer a building owner anymore.
+    let weg_building = basic_auth(client.get(format!("{}/admin/buildings/{weg_id}", h.base_url)))
+        .send()
+        .await
+        .expect("fetch WEG building page")
+        .text()
+        .await
+        .expect("WEG building body");
+    assert!(
+        !weg_building.contains("Eigentümer hinzufügen"),
+        "no building owner once flats are individually owned, got {weg_building:?}"
+    );
+    assert!(
+        weg_building.contains("solange Wohnungen eigene Eigentümer haben"),
+        "the WEG explanation is shown on the building page, got {weg_building:?}"
+    );
+
+    // "One building owner" requires the owner fields.
+    let missing_owner = create(&[("ownership_style", "building")])
+        .await
+        .expect("create building without owner fields");
+    assert_eq!(
+        missing_owner.status(),
+        StatusCode::BAD_REQUEST,
+        "building-owner variant without owner fields must be rejected"
+    );
+    let missing_owner = missing_owner.text().await.expect("rejection body");
+    assert!(
+        missing_owner.contains("müssen Name, E-Mail-Adresse und Beginn"),
+        "clear message for the missing owner fields, got {missing_owner:?}"
+    );
+
+    // With the owner given, the building is wholly owned: apartments can be
+    // created without an owner and the apartment page does not offer "Eigentümer
+    // hinzufügen".
+    let owned = create(&[
+        ("ownership_style", "building"),
+        ("owner_name", "Deutsche Wohnbau SE"),
+        ("owner_email", "service@deutsche-wohnbau.example"),
+        ("owner_start_date", "1995-01-01"),
+    ])
+    .await
+    .expect("create wholly-owned building");
+    assert_eq!(owned.status(), StatusCode::SEE_OTHER);
+    let owned_id = owned
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .expect("Location")
+        .trim_start_matches("/admin/buildings/")
+        .to_string();
+    let owned_apt = basic_auth(client.post(format!(
+        "{}/admin/buildings/{owned_id}/apartments",
+        h.base_url
+    )))
+    .form(&[
+        ("name", "EG links"),
+        ("description", ""),
+        ("owner_name", ""),
+        ("owner_email", ""),
+        ("owner_start_date", ""),
+        ("owner_end_date", ""),
+    ])
+    .send()
+    .await
+    .expect("create building-owned apartment");
+    assert_eq!(owned_apt.status(), StatusCode::SEE_OTHER);
+
+    // The new-apartment form of a wholly-owned building does not offer the
+    // owner fields at all…
+    let owned_form = basic_auth(client.get(format!(
+        "{}/admin/buildings/{owned_id}/apartments/new",
+        h.base_url
+    )))
+    .send()
+    .await
+    .expect("fetch new apartment page")
+    .text()
+    .await
+    .expect("new apartment body");
+    assert!(
+        !owned_form.contains(r#"name="owner_name""#),
+        "no owner fields for a wholly-owned building, got {owned_form:?}"
+    );
+
+    // …and even a hand-crafted submission with owner fields is rejected by
+    // the database (the ownership forms are mutually exclusive).
+    let crafted = basic_auth(client.post(format!(
+        "{}/admin/buildings/{owned_id}/apartments",
+        h.base_url
+    )))
+    .form(&[
+        ("name", "EG links"),
+        ("description", ""),
+        ("owner_name", "Alice"),
+        ("owner_email", "alice@example.com"),
+        ("owner_start_date", "2026-01-01"),
+        ("owner_end_date", ""),
+    ])
+    .send()
+    .await
+    .expect("crafted apartment-with-owner submission");
+    assert_eq!(
+        crafted.status(),
+        StatusCode::BAD_REQUEST,
+        "apartment with owner in a wholly-owned building must be rejected"
+    );
+    assert!(
+        crafted
+            .text()
+            .await
+            .expect("crafted rejection body")
+            .contains("keinen eigenen Eigentümer"),
+        "the database's mutual-exclusivity message is shown inline"
+    );
+    assert_eq!(
+        queries::list_apartments(&h.pool, &owned_id)
+            .await
+            .expect("list apartments")
+            .len(),
+        1,
+        "the rejected create added no apartment (the earlier building-owned one remains)"
+    );
+
+    let owned_apartment_id = queries::list_apartments(&h.pool, &owned_id)
+        .await
+        .expect("list apartments")[0]
+        .id
+        .clone();
+    let page = basic_auth(client.get(format!(
+        "{}/admin/buildings/{owned_id}/apartments/{owned_apartment_id}",
+        h.base_url
+    )))
+    .send()
+    .await
+    .expect("fetch building-owned apartment page")
+    .text()
+    .await
+    .expect("building-owned apartment body");
+    assert!(
+        !page.contains("Eigentümer hinzufügen"),
+        "no per-apartment owner form for a wholly-owned building, got {page:?}"
+    );
+    assert!(
+        page.contains("gehört als Ganzes dem Gebäudeeigentümer"),
+        "the WEG-split explanation is shown, got {page:?}"
+    );
+
+    // The apartments have no dedicated owners, so the building page still
+    // offers adding/seeing a building owner.
+    let owned_building =
+        basic_auth(client.get(format!("{}/admin/buildings/{owned_id}", h.base_url)))
+            .send()
+            .await
+            .expect("fetch wholly-owned building page")
+            .text()
+            .await
+            .expect("wholly-owned building body");
+    assert!(
+        owned_building.contains("Eigentümer hinzufügen")
+            && owned_building.contains("Deutsche Wohnbau SE"),
+        "building owner still offered and listed, got {owned_building:?}"
+    );
+
+    // Owner fields submitted with the apartments variant are ignored.
+    let ignored = create(&[
+        ("ownership_style", "apartments"),
+        ("owner_name", "Ignored GmbH"),
+        ("owner_email", "ignored@example.com"),
+        ("owner_start_date", "2026-01-01"),
+    ])
+    .await
+    .expect("create WEG building with stray owner fields");
+    assert_eq!(ignored.status(), StatusCode::SEE_OTHER);
+    let ignored_id = ignored
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .expect("Location")
+        .trim_start_matches("/admin/buildings/")
+        .to_string();
+    assert_eq!(
+        queries::list_building_owners(&h.pool, &ignored_id)
+            .await
+            .expect("list building owners")
+            .len(),
+        0,
+        "owner fields must be ignored for the apartments variant"
     );
 }
 
@@ -1296,8 +2122,12 @@ async fn building_can_be_edited() {
         "new description, got {body:?}"
     );
     assert!(
-        body.contains(r#"<a href="mailto:bob@example.com">Bob</a>"#),
-        "new contact shown, got {body:?}"
+        body.contains(r#"<a href="mailto:bob@example.com">bob@example.com</a>"#),
+        "new contact shown as mailto link, got {body:?}"
+    );
+    assert!(
+        body.contains(">Bob</a>") && body.contains("/admin/people/"),
+        "new contact links to the person page, got {body:?}"
     );
 
     // Leaving both contact fields blank keeps the current Ansprechpartner.
@@ -1321,7 +2151,7 @@ async fn building_can_be_edited() {
         .await
         .expect("building body after blank contact");
     assert!(
-        body.contains(r#"<a href="mailto:bob@example.com">Bob</a>"#),
+        body.contains(">Bob</a> (<a href=\"mailto:bob@example.com\">"),
         "contact unchanged when fields are blank, got {body:?}"
     );
 }

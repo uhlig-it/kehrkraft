@@ -302,6 +302,11 @@ pub fn build_router(
     let admin_router = Router::new()
         .route("/", get(admin::buildings_index))
         .route("/admin", get(admin::buildings_index))
+        .route("/admin/people", get(admin::people_index))
+        .route(
+            "/admin/people/{person_id}",
+            get(admin::people_show).post(admin::people_update),
+        )
         .route(
             "/admin/buildings",
             get(admin::buildings_index).post(admin::buildings_create),

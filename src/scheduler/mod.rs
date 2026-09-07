@@ -172,13 +172,14 @@ fn majority_owner<'a>(
 ///   years (see `global_week_index`); `rotation_seed` is the base offset.
 /// - Every week has an assignee once at least one apartment has an owner:
 ///   the week belongs to the apartment's owner covering most of it, so
-///   transition weeks between two owners are always resolved. An apartment
-///   without its own ownership falls back to the building's owner (one
-///   entity owns the whole building, see `building_owners`), whose periods
-///   tile the building's timeline like an apartment's ownerships do.
-///   Apartments join the rotation with the first week that is at least half
-///   covered; apartments without any covering ownership are skipped that
-///   week.
+///   transition weeks between two owners are always resolved. Apartments of
+///   a wholly-owned building have no ownership records and fall back to the
+///   building's owner (one entity owns the whole building, see
+///   `building_owners`); since 0010 the two forms are mutually exclusive, so
+///   the apartment-owner precedence over the building owner is only a
+///   defense for legacy data entered before that invariant. Apartments join
+///   the rotation with the first week that is at least half covered;
+///   apartments without any covering ownership are skipped that week.
 /// - If the chosen apartment has a tenancy covering the whole week, the
 ///   responsibility is delegated to the tenant (whole-week rule, so a
 ///   tenant is never responsible before their tenancy begins).
@@ -1025,45 +1026,11 @@ mod tests {
             .all(|w| { w.assignee_name.as_deref() == Some("Ronny") && w.delegated }));
     }
 
-    #[tokio::test]
-    async fn apartment_ownership_wins_over_building_owner() {
-        let (pool, building_id) = setup().await;
-        let year = 2024;
-        add_building_owner(&pool, &building_id, "Deutsche Wohnbau SE", "1995-01-01").await;
-        let _apt1 = add_apartment(
-            &pool,
-            &building_id,
-            "A",
-            "2024-01-01 00:00:00",
-            "Alice",
-            "2024-01-01",
-            None,
-        )
-        .await;
-        let _apt2 =
-            add_building_owned_apartment(&pool, &building_id, "B", "2024-01-02 00:00:00").await;
-
-        let schedule = schedule_for_year(&building_id, year, &pool)
-            .await
-            .expect("schedule");
-        // Apartment A has its own owner, apartment B falls back to the building
-        // owner; the two alternate week by week.
-        assert!(schedule.iter().all(|w| {
-            matches!(
-                w.assignee_name.as_deref(),
-                Some("Alice" | "Deutsche Wohnbau SE")
-            )
-        }));
-        assert_eq!(
-            schedule
-                .iter()
-                .filter(|w| w.assignee_name.as_deref() == Some("Deutsche Wohnbau SE"))
-                .count(),
-            schedule
-                .iter()
-                .filter(|w| w.assignee_name.as_deref() == Some("Alice"))
-                .count(),
-            "both apartments rotate evenly"
-        );
-    }
+    // NOTE: A scheduler test for the "apartment ownership wins over building
+    // owner" precedence existed before migration 0010 made the two ownership
+    // forms mutually exclusive. The state it needs (a building owner AND a
+    // per-apartment ownership in the same building) cannot be constructed
+    // through the query layer anymore; the precedence logic remains in
+    // `schedule_for_year` only as defense for legacy data entered before the
+    // invariant.
 }

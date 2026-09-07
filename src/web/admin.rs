@@ -1,5 +1,6 @@
 use crate::db::models::{
-    Apartment, Building, BuildingAdministrator, BuildingOwner, Ownership, Tenancy,
+    Apartment, Building, BuildingAdministrator, BuildingOwner, Ownership, Person, PersonRoleRow,
+    Tenancy,
 };
 use crate::db::queries;
 use crate::db::Db;
@@ -72,6 +73,17 @@ pub struct BuildingsNewTemplate {
     pub description: String,
     pub admin_name: String,
     pub admin_email: String,
+    /// The building's ownership structure, chosen visually on the form:
+    /// "apartments" (each flat gets its own owner, WEG) or "building" (one
+    /// person/company owns the whole building).
+    pub ownership_style: String,
+    /// Optional initial building owner, collected in the same form so a
+    /// wholly-owned building needs no separate owner-creation step.
+    pub owner_name: String,
+    pub owner_email: String,
+    pub owner_start_date: String,
+    /// Known owners, offered as suggestions on the name/e-mail fields.
+    pub people: Vec<Person>,
 }
 
 #[derive(Template)]
@@ -85,6 +97,8 @@ pub struct BuildingsEditTemplate {
     pub description: String,
     pub admin_name: String,
     pub admin_email: String,
+    /// Known people, offered as suggestions on the Ansprechpartner fields.
+    pub people: Vec<Person>,
 }
 
 /// One row of the Kehrwoche roster as the templates render it: dates in
@@ -165,6 +179,9 @@ pub struct BuildingsShowTemplate {
     pub year: i32,
     pub schedule: Vec<ScheduleRow>,
     pub rotation_options: Vec<(i64, bool)>,
+    /// Whether any apartment has its own ownership record. Then the building
+    /// is a WEG, and adding a building owner is not offered.
+    pub has_apartment_owners: bool,
     pub error: Option<String>,
 }
 
@@ -195,6 +212,8 @@ pub struct ApartmentsNewTemplate {
     pub owner_email: String,
     pub owner_start_date: String,
     pub owner_end_date: Option<String>,
+    /// Known owners, offered as suggestions on the name/e-mail fields.
+    pub people: Vec<Person>,
 }
 
 #[derive(Template)]
@@ -221,6 +240,12 @@ pub struct ApartmentsShowTemplate {
     pub owner_form: Option<OwnershipForm>,
     /// Submitted values, preserved when an "Add Tenant" submission fails.
     pub tenant_form: Option<TenancyForm>,
+    /// Known owners, offered as suggestions on the owner name/e-mail fields.
+    pub people: Vec<Person>,
+    /// Whether the building as a whole currently has a building owner. Then
+    /// the apartment cannot legally have its own owners (no WEG split), and
+    /// the "Eigentümer hinzufügen" form is not offered.
+    pub has_building_owner: bool,
 }
 
 #[derive(Template)]
@@ -240,6 +265,8 @@ pub struct OwnershipsEditTemplate {
     pub error: Option<String>,
     /// Input values: the record's values, or the submitted ones after a failed update.
     pub form: OwnershipForm,
+    /// Known owners, offered as suggestions on the name/e-mail fields.
+    pub people: Vec<Person>,
 }
 
 #[derive(Template)]
@@ -252,6 +279,8 @@ pub struct TenanciesEditTemplate {
     pub error: Option<String>,
     /// Input values: the record's values, or the submitted ones after a failed update.
     pub form: TenancyForm,
+    /// Known people, offered as suggestions on the name/e-mail fields.
+    pub people: Vec<Person>,
 }
 
 // --- Buildings ---
@@ -262,6 +291,22 @@ pub struct CreateBuildingForm {
     pub description: String,
     pub admin_name: String,
     pub admin_email: String,
+    /// Visual choice of the ownership structure: "apartments" (each flat
+    /// gets its own owner, WEG) or "building" (one person/company owns the
+    /// whole building). `#[serde(default)]` keeps older clients that omit
+    /// the field working; missing means the apartments variant, i.e. no
+    /// building owner.
+    #[serde(default)]
+    pub ownership_style: String,
+    /// Owner fields of the "building" variant; when the style is
+    /// "apartments", they are ignored. `#[serde(default)]` keeps older
+    /// clients that omit the fields working.
+    #[serde(default)]
+    pub owner_name: String,
+    #[serde(default)]
+    pub owner_email: String,
+    #[serde(default)]
+    pub owner_start_date: String,
 }
 
 /// Form data of the "edit building" page. The Ansprechpartner fields are
@@ -283,6 +328,17 @@ fn db_message(err: &sqlx::Error) -> Option<String> {
     err.as_database_error().map(|e| e.message().to_owned())
 }
 
+/// Load the known people (owner master data) for the suggestion lists, or
+/// return a short error response.
+async fn load_people(pool: &Db) -> Result<Vec<Person>, (axum::http::StatusCode, &'static str)> {
+    queries::list_people(pool).await.map_err(|_| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Personen konnten nicht geladen werden.",
+        )
+    })
+}
+
 pub async fn buildings_index(State(pool): State<Db>) -> impl axum::response::IntoResponse {
     match queries::list_buildings(&pool).await {
         Ok(buildings) => render(BuildingsIndexTemplate {
@@ -297,7 +353,11 @@ pub async fn buildings_index(State(pool): State<Db>) -> impl axum::response::Int
     }
 }
 
-pub async fn buildings_new() -> impl axum::response::IntoResponse {
+pub async fn buildings_new(State(pool): State<Db>) -> impl axum::response::IntoResponse {
+    let people = match load_people(&pool).await {
+        Ok(p) => p,
+        Err(err) => return err.into_response(),
+    };
     render(BuildingsNewTemplate {
         title: "Neues Gebäude anlegen",
         error: None,
@@ -305,6 +365,11 @@ pub async fn buildings_new() -> impl axum::response::IntoResponse {
         description: String::new(),
         admin_name: String::new(),
         admin_email: String::new(),
+        ownership_style: "apartments".to_string(),
+        owner_name: String::new(),
+        owner_email: String::new(),
+        owner_start_date: String::new(),
+        people,
     })
 }
 
@@ -312,25 +377,88 @@ pub async fn buildings_create(
     State(pool): State<Db>,
     Form(form): Form<CreateBuildingForm>,
 ) -> impl axum::response::IntoResponse {
-    match queries::create_building(
-        &pool,
-        &form.name,
-        &form.description,
-        &form.admin_name,
-        &form.admin_email,
-    )
-    .await
-    {
-        Ok(building) => Redirect::to(&format!("/admin/buildings/{}", building.id)).into_response(),
-        Err(err) => match db_message(&err) {
-            Some(msg) => render_bad_request(BuildingsNewTemplate {
+    // The ownership structure chosen on the form decides whether the owner
+    // fields apply: "apartments" (the default, also for legacy clients)
+    // creates a WEG-style building without an owner.
+    let owner_input = if form.ownership_style == "building" {
+        if form.owner_name.trim().is_empty()
+            && form.owner_email.trim().is_empty()
+            && form.owner_start_date.trim().is_empty()
+        {
+            let people = match load_people(&pool).await {
+                Ok(p) => p,
+                Err(err) => return err.into_response(),
+            };
+            return render_bad_request(BuildingsNewTemplate {
                 title: "Neues Gebäude anlegen",
-                error: Some(msg),
+                error: Some(
+                    "Für ein Gebäude mit einem einzigen Eigentümer müssen Name, E-Mail-Adresse und Beginn („Eigentum ab“) angegeben werden.".to_string(),
+                ),
                 name: form.name,
                 description: form.description,
                 admin_name: form.admin_name,
                 admin_email: form.admin_email,
-            }),
+                ownership_style: form.ownership_style,
+                owner_name: form.owner_name,
+                owner_email: form.owner_email,
+                owner_start_date: form.owner_start_date,
+                people,
+            });
+        }
+        Some(queries::NewOwner {
+            name: &form.owner_name,
+            email: &form.owner_email,
+            start_date: &form.owner_start_date,
+            end_date: None,
+        })
+    } else {
+        None
+    };
+    let result = match owner_input {
+        Some(owner) => {
+            queries::create_building_with_owner(
+                &pool,
+                &form.name,
+                &form.description,
+                &form.admin_name,
+                &form.admin_email,
+                &owner,
+            )
+            .await
+        }
+        None => {
+            queries::create_building(
+                &pool,
+                &form.name,
+                &form.description,
+                &form.admin_name,
+                &form.admin_email,
+            )
+            .await
+        }
+    };
+    match result {
+        Ok(building) => Redirect::to(&format!("/admin/buildings/{}", building.id)).into_response(),
+        Err(err) => match db_message(&err) {
+            Some(msg) => {
+                let people = match load_people(&pool).await {
+                    Ok(p) => p,
+                    Err(err) => return err.into_response(),
+                };
+                render_bad_request(BuildingsNewTemplate {
+                    title: "Neues Gebäude anlegen",
+                    error: Some(msg),
+                    name: form.name,
+                    description: form.description,
+                    admin_name: form.admin_name,
+                    admin_email: form.admin_email,
+                    ownership_style: form.ownership_style,
+                    owner_name: form.owner_name,
+                    owner_email: form.owner_email,
+                    owner_start_date: form.owner_start_date,
+                    people,
+                })
+            }
             None => (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "Gebäude konnte nicht angelegt werden.",
@@ -357,6 +485,10 @@ pub async fn buildings_edit(
                 .into_response()
         }
     };
+    let people = match load_people(&pool).await {
+        Ok(p) => p,
+        Err(err) => return err.into_response(),
+    };
     let admin = admins.first();
     let name = building.name.clone();
     let description = building.description.clone();
@@ -368,6 +500,7 @@ pub async fn buildings_edit(
         description,
         admin_name: admin.map_or_else(String::new, |a| a.name.clone()),
         admin_email: admin.map_or_else(String::new, |a| a.email.clone()),
+        people,
     })
 }
 
@@ -391,15 +524,22 @@ pub async fn buildings_update(
     match queries::update_building(&pool, &id, &form.name, &form.description, administrator).await {
         Ok(_) => Redirect::to(&format!("/admin/buildings/{id}")).into_response(),
         Err(err) => match db_message(&err) {
-            Some(msg) => render_bad_request(BuildingsEditTemplate {
-                title: "Gebäude bearbeiten",
-                building,
-                error: Some(msg),
-                name: form.name,
-                description: form.description,
-                admin_name: form.admin_name,
-                admin_email: form.admin_email,
-            }),
+            Some(msg) => {
+                let people = match load_people(&pool).await {
+                    Ok(p) => p,
+                    Err(err) => return err.into_response(),
+                };
+                render_bad_request(BuildingsEditTemplate {
+                    title: "Gebäude bearbeiten",
+                    building,
+                    error: Some(msg),
+                    name: form.name,
+                    description: form.description,
+                    admin_name: form.admin_name,
+                    admin_email: form.admin_email,
+                    people,
+                })
+            }
             None => (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "Gebäude konnte nicht gespeichert werden.",
@@ -461,6 +601,17 @@ async fn render_building_page(
             // dropdown offers exactly the distinct phases 0..n-1; the current
             // value is always included even when it lies outside that range.
             let rotation_options = rotation_seed_options(building.rotation_seed, apartments.len());
+            let has_apartment_owners =
+                match queries::building_has_apartment_owners(pool, &building.id).await {
+                    Ok(has) => has,
+                    Err(_) => {
+                        return (
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                            "Eigentumsverhältnisse konnten nicht geladen werden.",
+                        )
+                            .into_response()
+                    }
+                };
             render(BuildingsShowTemplate {
                 title: building.name.clone(),
                 building,
@@ -470,6 +621,7 @@ async fn render_building_page(
                 year,
                 schedule: schedule_rows(schedule, today),
                 rotation_options,
+                has_apartment_owners,
                 error,
             })
         }
@@ -575,14 +727,22 @@ pub async fn buildings_rotation_seed_update(
 
 /// Form data of the "new apartment" page: besides name and description it
 /// collects the initial owner, because the database requires an ownership
-/// record to exist from the moment the apartment is created.
+/// record to exist from the moment the apartment is created. The owner
+/// fields are not rendered when the building has a building owner (the
+/// apartment then belongs to the building as a whole, and the database
+/// rejects such an ownership anyway, see 0010); `#[serde(default)]` keeps
+/// clients without the hidden fields working.
 #[derive(serde::Deserialize)]
 pub struct CreateApartmentForm {
     pub name: String,
     pub description: String,
+    #[serde(default)]
     pub owner_name: String,
+    #[serde(default)]
     pub owner_email: String,
+    #[serde(default)]
     pub owner_start_date: String,
+    #[serde(default)]
     pub owner_end_date: Option<String>,
 }
 
@@ -653,16 +813,28 @@ async fn render_apartment_show_error(
         queries::list_ownerships(pool, apartment_id).await,
         queries::list_tenancies(pool, apartment_id).await,
     ) {
-        (Ok(ownerships), Ok(tenancies)) => render_bad_request(ApartmentsShowTemplate {
-            title: apartment.name.clone(),
-            building,
-            apartment,
-            ownerships,
-            tenancies,
-            error: Some(error),
-            owner_form,
-            tenant_form,
-        }),
+        (Ok(ownerships), Ok(tenancies)) => {
+            let people = match load_people(pool).await {
+                Ok(p) => p,
+                Err(err) => return err.into_response(),
+            };
+            let has_building_owner = queries::get_current_building_owner(pool, building_id)
+                .await
+                .map(|owner| owner.is_some())
+                .unwrap_or(false);
+            render_bad_request(ApartmentsShowTemplate {
+                title: apartment.name.clone(),
+                building,
+                apartment,
+                ownerships,
+                tenancies,
+                error: Some(error),
+                owner_form,
+                tenant_form,
+                people,
+                has_building_owner,
+            })
+        }
         _ => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             "Wohnungsdaten konnten nicht geladen werden.",
@@ -686,6 +858,10 @@ pub async fn apartments_new(
         Ok(b) => b,
         Err(err) => return err.into_response(),
     };
+    let people = match load_people(&pool).await {
+        Ok(p) => p,
+        Err(err) => return err.into_response(),
+    };
     let has_building_owner = queries::get_current_building_owner(&pool, &building_id)
         .await
         .map(|owner| owner.is_some())
@@ -701,6 +877,7 @@ pub async fn apartments_new(
         owner_email: String::new(),
         owner_start_date: String::new(),
         owner_end_date: None,
+        people,
     })
 }
 
@@ -759,6 +936,10 @@ pub async fn apartments_create(
                     Ok(b) => b,
                     Err(err) => return err.into_response(),
                 };
+                let people = match load_people(&pool).await {
+                    Ok(p) => p,
+                    Err(err) => return err.into_response(),
+                };
                 render_bad_request(ApartmentsNewTemplate {
                     title: "Neue Wohnung",
                     building,
@@ -770,6 +951,7 @@ pub async fn apartments_create(
                     owner_email: form.owner_email,
                     owner_start_date: form.owner_start_date,
                     owner_end_date: form.owner_end_date,
+                    people,
                 })
             }
             None => (
@@ -822,16 +1004,28 @@ pub async fn apartments_show(
         queries::list_ownerships(&pool, &apartment_id).await,
         queries::list_tenancies(&pool, &apartment_id).await,
     ) {
-        (Ok(ownerships), Ok(tenancies)) => render(ApartmentsShowTemplate {
-            title: apartment.name.clone(),
-            building,
-            apartment,
-            ownerships,
-            tenancies,
-            error: None,
-            owner_form: None,
-            tenant_form: None,
-        }),
+        (Ok(ownerships), Ok(tenancies)) => {
+            let people = match load_people(&pool).await {
+                Ok(p) => p,
+                Err(err) => return err.into_response(),
+            };
+            let has_building_owner = queries::get_current_building_owner(&pool, &building_id)
+                .await
+                .map(|owner| owner.is_some())
+                .unwrap_or(false);
+            render(ApartmentsShowTemplate {
+                title: apartment.name.clone(),
+                building,
+                apartment,
+                ownerships,
+                tenancies,
+                error: None,
+                owner_form: None,
+                tenant_form: None,
+                people,
+                has_building_owner,
+            })
+        }
         _ => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             "Wohnungsdaten konnten nicht geladen werden.",
@@ -1030,6 +1224,10 @@ pub async fn ownerships_edit(
             if ownership.apartment_id != apartment_id {
                 return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
             }
+            let people = match load_people(&pool).await {
+                Ok(p) => p,
+                Err(err) => return err.into_response(),
+            };
             let form = OwnershipForm {
                 name: ownership.name.clone(),
                 email: ownership.email.clone(),
@@ -1043,6 +1241,7 @@ pub async fn ownerships_edit(
                 ownership,
                 error: None,
                 form,
+                people,
             })
         }
         Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
@@ -1068,6 +1267,10 @@ async fn render_ownership_edit_error(
         Ok(b) => b,
         Err(err) => return err.into_response(),
     };
+    let people = match load_people(pool).await {
+        Ok(p) => p,
+        Err(err) => return err.into_response(),
+    };
     render_bad_request(OwnershipsEditTemplate {
         title: "Eigentümer bearbeiten".to_string(),
         building,
@@ -1075,6 +1278,7 @@ async fn render_ownership_edit_error(
         ownership: ownership.clone(),
         error: Some(error),
         form,
+        people,
     })
 }
 
@@ -1242,6 +1446,10 @@ pub async fn tenancies_edit(
             if tenancy.apartment_id != apartment_id {
                 return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
             }
+            let people = match load_people(&pool).await {
+                Ok(p) => p,
+                Err(err) => return err.into_response(),
+            };
             let form = TenancyForm {
                 name: tenancy.name.clone(),
                 email: tenancy.email.clone(),
@@ -1255,6 +1463,7 @@ pub async fn tenancies_edit(
                 tenancy,
                 error: None,
                 form,
+                people,
             })
         }
         Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
@@ -1280,6 +1489,10 @@ async fn render_tenancy_edit_error(
         Ok(b) => b,
         Err(err) => return err.into_response(),
     };
+    let people = match load_people(pool).await {
+        Ok(p) => p,
+        Err(err) => return err.into_response(),
+    };
     render_bad_request(TenanciesEditTemplate {
         title: "Mieter bearbeiten".to_string(),
         building,
@@ -1287,6 +1500,7 @@ async fn render_tenancy_edit_error(
         tenancy: tenancy.clone(),
         error: Some(error),
         form,
+        people,
     })
 }
 
@@ -1366,6 +1580,314 @@ pub async fn tenancies_delete(
     )
 }
 
+// --- People ---
+
+#[derive(Template)]
+#[template(path = "admin/people/index.html")]
+pub struct PeopleIndexTemplate {
+    pub title: &'static str,
+    /// One row per person: the person, plus a compact summary of their
+    /// roles. The e-mail is shown only when the viewport has room for it
+    /// (see the `email-if-space` CSS class).
+    pub entries: Vec<PersonIndexEntry>,
+}
+
+/// One row of the people index.
+pub struct PersonIndexEntry {
+    pub person: Person,
+    pub roles_summary: String,
+}
+
+#[derive(Template)]
+#[template(path = "admin/people/show.html")]
+pub struct PeopleShowTemplate {
+    pub title: String,
+    pub person: Person,
+    /// The person's roles, each with a link to the object it refers to.
+    pub roles: Vec<PersonRole>,
+    pub error: Option<String>,
+    /// Contact form values: the person's current ones, or the submitted ones
+    /// after a failed update.
+    pub form: PersonForm,
+}
+
+/// Form data of the person page's contact form. Since 0009, the database
+/// rejects an e-mail address that already belongs to another person.
+#[derive(serde::Deserialize)]
+pub struct PersonForm {
+    pub name: String,
+    pub email: String,
+}
+
+/// A link target used by the role entries of the person page.
+pub struct BuildingLink {
+    pub id: String,
+    pub name: String,
+}
+
+/// A link target used by the apartment role entries of the person page.
+pub struct ApartmentLink {
+    pub id: String,
+    pub name: String,
+    pub building_id: String,
+    pub building_name: String,
+}
+
+/// One role of a person on the person page.
+pub enum PersonRole {
+    Admin {
+        building: BuildingLink,
+    },
+    BuildingOwner {
+        building: BuildingLink,
+        start_date: String,
+        end_date: Option<String>,
+    },
+    ApartmentOwner {
+        apartment: ApartmentLink,
+        start_date: String,
+        end_date: Option<String>,
+    },
+    Tenant {
+        apartment: ApartmentLink,
+        start_date: String,
+        end_date: Option<String>,
+    },
+}
+
+/// Map one role row of [`queries::list_person_roles`] to its display entry;
+/// the `kind` column hands the row to its variant.
+fn person_role(row: PersonRoleRow) -> PersonRole {
+    let building = || BuildingLink {
+        id: row.building_id.clone().expect("building id of a role row"),
+        name: row
+            .building_name
+            .clone()
+            .expect("building name of a role row"),
+    };
+    let apartment = || ApartmentLink {
+        id: row
+            .apartment_id
+            .clone()
+            .expect("apartment id of a role row"),
+        name: row
+            .apartment_name
+            .clone()
+            .expect("apartment name of a role row"),
+        building_id: row.building_id.clone().expect("building id of a role row"),
+        building_name: row
+            .building_name
+            .clone()
+            .expect("building name of a role row"),
+    };
+    let start_date = || row.start_date.clone().expect("start date of a role row");
+    match row.kind.as_str() {
+        "admin" => PersonRole::Admin {
+            building: building(),
+        },
+        "building_owner" => PersonRole::BuildingOwner {
+            building: building(),
+            start_date: start_date(),
+            end_date: row.end_date,
+        },
+        "apartment_owner" => PersonRole::ApartmentOwner {
+            apartment: apartment(),
+            start_date: start_date(),
+            end_date: row.end_date,
+        },
+        "tenant" => PersonRole::Tenant {
+            apartment: apartment(),
+            start_date: start_date(),
+            end_date: row.end_date,
+        },
+        other => unreachable!("unknown role kind {other:?}"),
+    }
+}
+
+fn person_roles(rows: Vec<PersonRoleRow>) -> Vec<PersonRole> {
+    rows.into_iter().map(person_role).collect()
+}
+
+/// The short role label shown in the people index listing.
+fn role_label(role: &PersonRole) -> String {
+    match role {
+        PersonRole::Admin { building } => format!("Ansprechpartner von {}", building.name),
+        PersonRole::BuildingOwner { building, .. } => {
+            format!("Gebäudeeigentümer von {}", building.name)
+        }
+        PersonRole::ApartmentOwner { apartment, .. } => {
+            format!(
+                "Eigentümer von {} ({})",
+                apartment.name, apartment.building_name
+            )
+        }
+        PersonRole::Tenant { apartment, .. } => {
+            format!(
+                "Mieter von {} ({})",
+                apartment.name, apartment.building_name
+            )
+        }
+    }
+}
+
+/// A compact, truncated role summary for the people index: the first two
+/// roles, then "+N weitere". The person page lists the roles in full.
+fn roles_summary(roles: &[PersonRole]) -> String {
+    const MAX_SUMMARIZED: usize = 2;
+    let labels: Vec<String> = roles.iter().map(role_label).collect();
+    if labels.len() > MAX_SUMMARIZED {
+        format!(
+            "{} · +{} weitere",
+            labels[..MAX_SUMMARIZED].join(" · "),
+            labels.len() - MAX_SUMMARIZED
+        )
+    } else {
+        labels.join(" · ")
+    }
+}
+
+pub async fn people_index(State(pool): State<Db>) -> impl axum::response::IntoResponse {
+    let people = match queries::list_people(&pool).await {
+        Ok(p) => p,
+        Err(_) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Personen konnten nicht geladen werden.",
+            )
+                .into_response()
+        }
+    };
+    // All role rows in one query, grouped per person.
+    let rows = match queries::list_person_roles(&pool, None).await {
+        Ok(rows) => rows,
+        Err(_) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Rollen konnten nicht geladen werden.",
+            )
+                .into_response()
+        }
+    };
+    let mut roles_by_person: HashMap<String, Vec<PersonRole>> = HashMap::new();
+    for row in rows {
+        let person_id = row.person_id.clone();
+        roles_by_person
+            .entry(person_id)
+            .or_default()
+            .push(person_role(row));
+    }
+    let entries = people
+        .into_iter()
+        .map(|person| PersonIndexEntry {
+            roles_summary: roles_summary(
+                roles_by_person
+                    .get(&person.id)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
+            ),
+            person,
+        })
+        .collect();
+    render(PeopleIndexTemplate {
+        title: "Personen",
+        entries,
+    })
+}
+
+/// Render the person page; `error` is shown inline (used by failed contact
+/// submissions), `form` carries the submitted values then. `bad_request`
+/// maps the response to 400, mirroring the inline-error pages of the other
+/// forms.
+async fn render_person_page(
+    pool: &Db,
+    person_id: &str,
+    error: Option<String>,
+    form: PersonForm,
+    bad_request: bool,
+) -> axum::response::Response {
+    let person = match queries::get_person(pool, person_id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        Err(_) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Person konnte nicht geladen werden.",
+            )
+                .into_response()
+        }
+    };
+    let roles = match queries::list_person_roles(pool, Some(person_id)).await {
+        Ok(rows) => person_roles(rows),
+        Err(_) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Rollen konnten nicht geladen werden.",
+            )
+                .into_response()
+        }
+    };
+    let template = PeopleShowTemplate {
+        title: person.name.clone(),
+        person,
+        roles,
+        error,
+        form,
+    };
+    if bad_request {
+        render_bad_request(template)
+    } else {
+        render(template)
+    }
+}
+
+pub async fn people_show(
+    Path(person_id): Path<String>,
+    State(pool): State<Db>,
+) -> impl axum::response::IntoResponse {
+    let person = match queries::get_person(&pool, &person_id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        Err(_) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Person konnte nicht geladen werden.",
+            )
+                .into_response()
+        }
+    };
+    render_person_page(
+        &pool,
+        &person_id,
+        None,
+        PersonForm {
+            name: person.name.clone(),
+            email: person.email.clone(),
+        },
+        false,
+    )
+    .await
+}
+
+pub async fn people_update(
+    Path(person_id): Path<String>,
+    State(pool): State<Db>,
+    Form(form): Form<PersonForm>,
+) -> impl axum::response::IntoResponse {
+    // Name/e-mail format and the unique e-mail identity are enforced by the
+    // database (triggers on `people`); its rejection message is shown inline.
+    match queries::update_person(&pool, &person_id, &form.name, &form.email).await {
+        Ok(_) => Redirect::to(&format!("/admin/people/{person_id}")).into_response(),
+        Err(err) => match db_message(&err) {
+            Some(msg) => render_person_page(&pool, &person_id, Some(msg), form, true).await,
+            None => (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Person konnte nicht gespeichert werden.",
+            )
+                .into_response(),
+        },
+    }
+}
+
 /// Form data of the building-owner add/edit forms.
 #[derive(serde::Deserialize)]
 pub struct BuildingOwnerForm {
@@ -1386,6 +1908,8 @@ pub struct BuildingOwnerFormTemplate {
     pub action: String,
     pub submit_label: String,
     pub cancel_url: String,
+    /// Known owners, offered as suggestions on the name/e-mail fields.
+    pub people: Vec<Person>,
 }
 
 fn building_owner_form_template(
@@ -1395,6 +1919,7 @@ fn building_owner_form_template(
     form: BuildingOwnerForm,
     building_id: &str,
     owner_id: Option<&str>,
+    people: Vec<Person>,
 ) -> BuildingOwnerFormTemplate {
     let action = match owner_id {
         Some(owner_id) => format!("/admin/buildings/{building_id}/building_owners/{owner_id}"),
@@ -1413,6 +1938,7 @@ fn building_owner_form_template(
         form,
         action,
         submit_label,
+        people,
     }
 }
 
@@ -1422,6 +1948,10 @@ pub async fn building_owners_new(
 ) -> impl axum::response::IntoResponse {
     let building = match load_building(&pool, &building_id).await {
         Ok(b) => b,
+        Err(err) => return err.into_response(),
+    };
+    let people = match load_people(&pool).await {
+        Ok(p) => p,
         Err(err) => return err.into_response(),
     };
     render(building_owner_form_template(
@@ -1436,6 +1966,7 @@ pub async fn building_owners_new(
         },
         &building_id,
         None,
+        people,
     ))
 }
 
@@ -1468,6 +1999,10 @@ pub async fn building_owners_create(
                     Ok(b) => b,
                     Err(err) => return err.into_response(),
                 };
+                let people = match load_people(&pool).await {
+                    Ok(p) => p,
+                    Err(err) => return err.into_response(),
+                };
                 render_bad_request(building_owner_form_template(
                     "Gebäudeeigentümer hinzufügen".to_string(),
                     building,
@@ -1475,6 +2010,7 @@ pub async fn building_owners_create(
                     form,
                     &building_id,
                     None,
+                    people,
                 ))
             }
             None => (
@@ -1499,6 +2035,10 @@ pub async fn building_owners_edit(
             if owner.building_id != building_id {
                 return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
             }
+            let people = match load_people(&pool).await {
+                Ok(p) => p,
+                Err(err) => return err.into_response(),
+            };
             let form = BuildingOwnerForm {
                 name: owner.name.clone(),
                 email: owner.email.clone(),
@@ -1512,6 +2052,7 @@ pub async fn building_owners_edit(
                 form,
                 &building_id,
                 Some(&owner_id),
+                people,
             ))
         }
         Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
@@ -1561,6 +2102,10 @@ pub async fn building_owners_update(
                     Ok(b) => b,
                     Err(err) => return err.into_response(),
                 };
+                let people = match load_people(&pool).await {
+                    Ok(p) => p,
+                    Err(err) => return err.into_response(),
+                };
                 render_bad_request(building_owner_form_template(
                     "Gebäudeeigentümer bearbeiten".to_string(),
                     building,
@@ -1568,6 +2113,7 @@ pub async fn building_owners_update(
                     form,
                     &building_id,
                     Some(&owner_id),
+                    people,
                 ))
             }
             None => (

@@ -16,6 +16,7 @@
         </a>
         <nav class="topnav">
           <a href="/admin">Gebäude</a>
+          <a href="/admin/people">Personen</a>
         </nav>
       </div>
     </header>
@@ -25,5 +26,25 @@
     <footer class="footer">Kehrkraft · Kehrwoche-Rotationsplan</footer>
     <script src="/static/htmx.min.js"></script>
     <script src="/static/sortable.min.js"></script>
+    <script>
+      // Owner suggestions: picking a known name from the suggestion list also
+      // fills the matching e-mail field (when still empty), so reusing an
+      // existing owner works in one step. No suggest-and-select flow, no
+      // separate person page: the owner fields create or reuse a person on
+      // submit (same e-mail = same person, resolved by the server).
+      document.addEventListener('input', (event) => {
+        const input = event.target;
+        const emailFieldId = input.dataset.emailField;
+        if (!emailFieldId) return;
+        const list = document.getElementById(input.getAttribute('list'));
+        if (!list) return;
+        const picked = [...list.options].filter((o) => o.value === input.value);
+        if (picked.length !== 1) return;
+        const emailField = document.getElementById(emailFieldId);
+        if (emailField && emailField.value === '') {
+          emailField.value = picked[0].dataset.email || '';
+        }
+      });
+    </script>
   </body>
 </html>
