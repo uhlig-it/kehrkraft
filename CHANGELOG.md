@@ -19,14 +19,8 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - *(deps)* Update rust crate serde to v1.0.229 (#5)
-- Release 0.4.0
-- Release 0.4.0
-- Release 0.4.0
-- Release 0.4.0
-- Release 0.4.0
 - *(deps)* Update rust crate tracing-subscriber to v0.3.23 (#6)
 - *(deps)* Update rust crate askama to v0.16.1 (#13)
-- Release 0.5.0
 
 ### Fixed
 
@@ -67,75 +61,6 @@ All notable changes to this project will be documented in this file.
 
 - Fix Renovate lookup for rustsec/audit-check pin
 - Remove plan that was long implemented
-
-## [0.4.0] - 2026-09-06
-
-### Added
-
-- Add iCal feed for the Kehrwoche schedule
-- Polish resident links and PDF logo
-- Expose rotation seed in the admin danger zone
-
-### Changed
-
-- *(deps)* Update rust crate chrono to v0.4.45 (#3)
-- Release 0.4.0
-- Release 0.4.0
-- Release 0.4.0
-- Release 0.4.0
-
-### Fixed
-
-- Accept apartment edit form without owner fields
-
-## [0.4.0] - 2026-09-06
-
-## [0.4.0] - 2026-09-06
-
-### Added
-
-- Add iCal feed for the Kehrwoche schedule
-- Polish resident links and PDF logo
-- Expose rotation seed in the admin danger zone
-
-### Changed
-
-- *(deps)* Update rust crate chrono to v0.4.45 (#3)
-- Release 0.4.0
-- Release 0.4.0
-
-### Fixed
-
-- Accept apartment edit form without owner fields
-
-## [0.4.0] - 2026-09-06
-
-### Added
-
-- Add iCal feed for the Kehrwoche schedule
-- Polish resident links and PDF logo
-- Expose rotation seed in the admin danger zone
-
-### Changed
-
-- *(deps)* Update rust crate chrono to v0.4.45 (#3)
-- Release 0.4.0
-
-### Fixed
-
-- Accept apartment edit form without owner fields
-
-## [0.4.0] - 2026-09-06
-
-### Added
-
-- Add iCal feed for the Kehrwoche schedule
-- Polish resident links and PDF logo
-- Expose rotation seed in the admin danger zone
-
-### Fixed
-
-- Accept apartment edit form without owner fields
 
 ## [0.4.0] - 2026-09-06
 
