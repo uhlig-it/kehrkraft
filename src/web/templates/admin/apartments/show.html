@@ -7,6 +7,8 @@
   <a href="/admin">Gebäude</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><span>{{ apartment.name }}</span>
 </nav>
 
+{% include "admin/_error.html" %}
+
 <div class="page-header">
   <div>
     <h1>{{ apartment.name }}</h1>
@@ -58,7 +60,6 @@
   {% else %}
   <details class="disclosure" {% if owner_form.is_some() || owner_confirmation.is_some() %}open{% endif %}>
     <summary>Eigentümer hinzufügen</summary>
-    {% if owner_form.is_some() %}{% include "admin/_error.html" %}{% endif %}
     {% if let Some(c) = owner_confirmation %}
     <div class="alert alert-info" role="alert">
       <p><strong>{{ c.previous_name }}</strong> ist derzeit als Eigentümerin bzw. Eigentümer über den {{ c.new_start }} hinaus erfasst. Soll das bisherige Eigentum am <strong>{{ c.previous_end }}</strong> (dem Tag vor dem neuen Beginn) enden?</p>
@@ -141,7 +142,6 @@
 
   <details class="disclosure" {% if tenant_form.is_some() || tenant_confirmation.is_some() %}open{% endif %}>
     <summary>Mieter hinzufügen</summary>
-    {% if tenant_form.is_some() %}{% include "admin/_error.html" %}{% endif %}
     {% if let Some(c) = tenant_confirmation %}
     <div class="alert alert-info" role="alert">
       <p>Das bisherige Mietverhältnis von <strong>{{ c.previous_name }}</strong> besteht derzeit über den {{ c.new_start }} hinaus. Soll es am <strong>{{ c.previous_end }}</strong> (dem Tag vor dem neuen Mietbeginn) enden?</p>

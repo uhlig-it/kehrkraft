@@ -83,6 +83,92 @@ async fn create_apartment(
     location.trim_start_matches(&prefix).to_string()
 }
 
+/// Today's date minus `n` days, formatted YYYY-MM-DD for the forms. The
+/// delete guards and the end-date warning hinge on the real current date, so
+/// these tests build their periods relative to it instead of hardcoding dates.
+fn days_ago(n: i64) -> String {
+    use chrono::{Duration, Local};
+    (Local::now().date_naive() - Duration::days(n))
+        .format("%Y-%m-%d")
+        .to_string()
+}
+
+/// Create a building owned as a whole by `owner_name`/`owner_email` starting
+/// `owner_start` (the "ownership_style=building" variant); returns the id.
+async fn create_wholly_owned_building(
+    h: &Harness,
+    client: &reqwest::Client,
+    name: &str,
+    owner_name: &str,
+    owner_email: &str,
+    owner_start: &str,
+) -> String {
+    let resp = basic_auth(client.post(format!("{}/admin/buildings", h.base_url)))
+        .form(&[
+            ("name", name),
+            ("description", ""),
+            ("admin_name", "Alice"),
+            ("admin_email", "alice@example.com"),
+            ("ownership_style", "building"),
+            ("owner_name", owner_name),
+            ("owner_email", owner_email),
+            ("owner_start_date", owner_start),
+        ])
+        .send()
+        .await
+        .expect("create wholly-owned building");
+    assert_eq!(
+        resp.status(),
+        StatusCode::SEE_OTHER,
+        "wholly-owned building creation redirects"
+    );
+    resp.headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .expect("Location header")
+        .trim_start_matches("/admin/buildings/")
+        .to_string()
+}
+
+/// Create an apartment that relies on the building owner (no per-apartment
+/// ownership); returns its id.
+async fn create_building_owned_apartment(
+    h: &Harness,
+    client: &reqwest::Client,
+    building_id: &str,
+    name: &str,
+) -> String {
+    let resp = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/apartments",
+        h.base_url
+    )))
+    .form(&[
+        ("name", name),
+        ("description", ""),
+        ("owner_name", ""),
+        ("owner_email", ""),
+        ("owner_start_date", ""),
+        ("owner_end_date", ""),
+    ])
+    .send()
+    .await
+    .expect("create building-owned apartment");
+    assert_eq!(
+        resp.status(),
+        StatusCode::SEE_OTHER,
+        "building-owned apartment creation redirects"
+    );
+    let location = resp
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .expect("Location header")
+        .to_string();
+    let prefix = format!("/admin/buildings/{building_id}/apartments/");
+    assert!(location.starts_with(&prefix), "got {location:?}");
+    location.trim_start_matches(&prefix).to_string()
+}
+
 fn basic_auth(req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
     req.basic_auth(harness::ADMIN_USER, Some(harness::ADMIN_PASS))
 }
@@ -585,6 +671,581 @@ async fn adding_building_owner_asks_to_close_previous_building_owner() {
         owners.iter().any(|o| o.name == "Hansa Baugesellschaft"),
         "new building owner added"
     );
+}
+
+/// The current building owner cannot be deleted while apartments depend on it:
+/// the delete guard of 0011 rejects it, so a building never loses its covering
+/// owner through deletion. A closed predecessor (entirely in the past) is
+/// still deletable.
+#[tokio::test]
+async fn current_building_owner_cannot_be_deleted() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    // Wholly-owned building: owner A since ~400 days, one apartment relying on it.
+    let a_start = days_ago(400);
+    let building_id = create_wholly_owned_building(
+        &h,
+        &client,
+        "Einzeleigentümerhaus",
+        "Deutsche Wohnbau SE",
+        "service@deutsche-wohnbau.example",
+        &a_start,
+    )
+    .await;
+    let _apartment_id =
+        create_building_owned_apartment(&h, &client, &building_id, "EG links").await;
+
+    // Deleting the current building owner is rejected: the building would lose
+    // its covering owner while the apartment depends on it.
+    let owners = queries::list_building_owners(&h.pool, &building_id)
+        .await
+        .expect("list building owners");
+    assert_eq!(owners.len(), 1);
+    let denied = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/building_owners/{}/delete",
+        h.base_url, owners[0].id
+    )))
+    .send()
+    .await
+    .expect("delete current building owner");
+    assert!(
+        denied.status().is_client_error(),
+        "deleting the current building owner must be rejected, got {}",
+        denied.status()
+    );
+    assert!(
+        denied
+            .text()
+            .await
+            .expect("rejection body")
+            .contains("derzeit abdeckt, kann nicht gelöscht werden"),
+        "clear rejection message shown inline"
+    );
+    assert_eq!(
+        queries::list_building_owners(&h.pool, &building_id)
+            .await
+            .expect("list building owners")
+            .len(),
+        1,
+        "the current building owner survives the rejected delete"
+    );
+
+    // A successor taking over ~7 days ago (confirming the handover) closes the
+    // predecessor; the closed, past period may then be deleted, the current
+    // successor still not.
+    let b_start = days_ago(7);
+    let ask = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/building_owners",
+        h.base_url
+    )))
+    .form(&[
+        ("name", "Berlin Wohnen GmbH"),
+        ("email", "kontakt@berlin-wohnen.example"),
+        ("start_date", b_start.as_str()),
+    ])
+    .send()
+    .await
+    .expect("ask about previous building owner");
+    assert_eq!(ask.status(), StatusCode::OK);
+    let confirmed = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/building_owners",
+        h.base_url
+    )))
+    .form(&[
+        ("name", "Berlin Wohnen GmbH"),
+        ("email", "kontakt@berlin-wohnen.example"),
+        ("start_date", b_start.as_str()),
+        ("close_previous", "yes"),
+    ])
+    .send()
+    .await
+    .expect("confirm closing the previous building owner");
+    assert_eq!(confirmed.status(), StatusCode::SEE_OTHER);
+
+    let owners = queries::list_building_owners(&h.pool, &building_id)
+        .await
+        .expect("list building owners");
+    let a = owners
+        .iter()
+        .find(|o| o.name == "Deutsche Wohnbau SE")
+        .expect("predecessor A");
+    let b = owners
+        .iter()
+        .find(|o| o.name == "Berlin Wohnen GmbH")
+        .expect("successor B");
+    assert!(a.end_date.is_some(), "A is closed by the handover");
+
+    // Deleting the closed predecessor (A, entirely in the past) is allowed.
+    let past_delete = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/building_owners/{}/delete",
+        h.base_url, a.id
+    )))
+    .send()
+    .await
+    .expect("delete closed predecessor");
+    assert!(
+        past_delete.status().is_redirection(),
+        "a closed, past period stays deletable"
+    );
+
+    // Deleting the current successor (B, covers today) is still rejected even
+    // though a predecessor existed before the handover.
+    let still_denied = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/building_owners/{}/delete",
+        h.base_url, b.id
+    )))
+    .send()
+    .await
+    .expect("delete current successor");
+    assert!(
+        still_denied.status().is_client_error(),
+        "deleting the current building owner must be rejected even with a closed predecessor, got {}",
+        still_denied.status()
+    );
+    assert_eq!(
+        queries::list_building_owners(&h.pool, &building_id)
+            .await
+            .expect("list building owners")
+            .len(),
+        1,
+        "only the current owner remains"
+    );
+}
+
+/// The apartment analogue: an apartment's owner covering the current date
+/// cannot be deleted, while the closed past period can.
+#[tokio::test]
+async fn current_apartment_owner_cannot_be_deleted() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    let building_id = create_building(&h, &client, "WEG-Haus").await;
+    let past_start = days_ago(500);
+    let past_end = days_ago(400);
+    let current_start = days_ago(399);
+    let created = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/apartments",
+        h.base_url
+    )))
+    .form(&[
+        ("name", "EG links"),
+        ("description", ""),
+        ("owner_name", "Ursprünglicher Eigentümer"),
+        ("owner_email", "urspruenglich@example.com"),
+        ("owner_start_date", past_start.as_str()),
+        ("owner_end_date", past_end.as_str()),
+    ])
+    .send()
+    .await
+    .expect("create apartment with initial owner");
+    assert_eq!(created.status(), StatusCode::SEE_OTHER);
+    let apartment_id = created
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .expect("Location")
+        .trim_start_matches(&format!("/admin/buildings/{building_id}/apartments/"))
+        .to_string();
+    let apt_url = format!(
+        "{}/admin/buildings/{building_id}/apartments/{apartment_id}",
+        h.base_url
+    );
+
+    // The current owner takes over the day after the initial period ends and
+    // is still open: covers today.
+    let current = basic_auth(client.post(format!("{apt_url}/ownerships")))
+        .form(&[
+            ("name", "Otto"),
+            ("email", "otto@example.com"),
+            ("start_date", current_start.as_str()),
+        ])
+        .send()
+        .await
+        .expect("add current owner");
+    assert_eq!(current.status(), StatusCode::SEE_OTHER);
+
+    let owners = queries::list_ownerships(&h.pool, &apartment_id)
+        .await
+        .expect("list ownerships");
+    let otto = owners
+        .iter()
+        .find(|o| o.name == "Otto")
+        .expect("current owner");
+    let denied = basic_auth(client.post(format!("{apt_url}/ownerships/{}/delete", otto.id)))
+        .send()
+        .await
+        .expect("delete current owner");
+    assert!(
+        denied.status().is_client_error(),
+        "deleting the current apartment owner must be rejected, got {}",
+        denied.status()
+    );
+    let denied_body = denied.text().await.expect("rejection body");
+    assert!(
+        denied_body.contains("derzeit abdeckt, kann nicht gelöscht werden"),
+        "clear rejection message shown inline, got {denied_body:?}"
+    );
+
+    let initial = owners
+        .iter()
+        .find(|o| o.name == "Ursprünglicher Eigentümer")
+        .expect("initial owner");
+    let past_delete =
+        basic_auth(client.post(format!("{apt_url}/ownerships/{}/delete", initial.id)))
+            .send()
+            .await
+            .expect("delete past period");
+    assert!(
+        past_delete.status().is_redirection(),
+        "a closed, past period stays deletable"
+    );
+    assert_eq!(
+        queries::list_ownerships(&h.pool, &apartment_id)
+            .await
+            .expect("list ownerships")
+            .len(),
+        1,
+        "only the current owner remains"
+    );
+}
+
+/// Setting the current building owner's end date before today asks for
+/// confirmation: the building would lose its covering owner. Declining
+/// discards the change, confirming applies it, and an end date on/after today
+/// needs no confirmation.
+#[tokio::test]
+async fn setting_current_building_owner_end_date_asks_confirmation() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    let a_start = days_ago(400);
+    let building_id = create_wholly_owned_building(
+        &h,
+        &client,
+        "Einzeleigentümerhaus",
+        "Deutsche Wohnbau SE",
+        "service@deutsche-wohnbau.example",
+        &a_start,
+    )
+    .await;
+    let _apartment_id =
+        create_building_owned_apartment(&h, &client, &building_id, "EG links").await;
+
+    let owners = queries::list_building_owners(&h.pool, &building_id)
+        .await
+        .expect("list building owners");
+    let owner_id = owners[0].id.clone();
+    let owner_url = format!(
+        "{}/admin/buildings/{building_id}/building_owners/{owner_id}",
+        h.base_url
+    );
+    let update = |fields: &[(&str, &str)]| {
+        let mut all = vec![
+            ("name", "Deutsche Wohnbau SE"),
+            ("email", "service@deutsche-wohnbau.example"),
+            ("start_date", a_start.as_str()),
+        ];
+        all.extend_from_slice(fields);
+        basic_auth(client.post(owner_url.clone())).form(&all).send()
+    };
+
+    // An end date on/after today keeps the owner covering today: no warning.
+    let later = days_ago(-30);
+    let future = update(&[("end_date", later.as_str())])
+        .await
+        .expect("set future end date");
+    assert_eq!(future.status(), StatusCode::SEE_OTHER, "no warning needed");
+
+    // An end date before today drops the coverage: warning + confirmation.
+    let early = days_ago(30);
+    let warn = update(&[("end_date", early.as_str())])
+        .await
+        .expect("set early end date");
+    assert_eq!(warn.status(), StatusCode::OK, "warning is not a rejection");
+    let warn_body = warn.text().await.expect("warning body");
+    assert!(
+        warn_body.contains("keinen Eigentümer mehr"),
+        "warning about losing the owner, got {warn_body:?}"
+    );
+    assert!(
+        warn_body.contains(r#"name="confirm_end" value="yes""#)
+            && warn_body.contains(r#"name="confirm_end" value="no""#),
+        "warning offers yes/no buttons, got {warn_body:?}"
+    );
+    assert_eq!(
+        queries::get_building_owner(&h.pool, &owner_id)
+            .await
+            .expect("get owner")
+            .expect("owner exists")
+            .end_date
+            .as_deref(),
+        Some(later.as_str()),
+        "the early end date is not applied yet"
+    );
+
+    // Declining discards the change.
+    let declined = update(&[("end_date", early.as_str()), ("confirm_end", "no")])
+        .await
+        .expect("decline early end");
+    assert_eq!(declined.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        queries::get_building_owner(&h.pool, &owner_id)
+            .await
+            .expect("get owner")
+            .expect("owner exists")
+            .end_date
+            .as_deref(),
+        Some(later.as_str()),
+        "declined end date is not applied"
+    );
+
+    // Confirming applies the end date.
+    let confirmed = update(&[("end_date", early.as_str()), ("confirm_end", "yes")])
+        .await
+        .expect("confirm early end");
+    assert_eq!(confirmed.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        queries::get_building_owner(&h.pool, &owner_id)
+            .await
+            .expect("get owner")
+            .expect("owner exists")
+            .end_date
+            .as_deref(),
+        Some(early.as_str()),
+        "confirmed end date is applied"
+    );
+}
+
+/// The apartment analogue: setting the current owner's end date before today
+/// asks for confirmation; declining discards, confirming applies.
+#[tokio::test]
+async fn setting_current_apartment_owner_end_date_asks_confirmation() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    let building_id = create_building(&h, &client, "WEG-Haus").await;
+    let past_start = days_ago(500);
+    let past_end = days_ago(400);
+    let current_start = days_ago(399);
+    let created = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/apartments",
+        h.base_url
+    )))
+    .form(&[
+        ("name", "EG links"),
+        ("description", ""),
+        ("owner_name", "Ursprünglicher Eigentümer"),
+        ("owner_email", "urspruenglich@example.com"),
+        ("owner_start_date", past_start.as_str()),
+        ("owner_end_date", past_end.as_str()),
+    ])
+    .send()
+    .await
+    .expect("create apartment with initial owner");
+    assert_eq!(created.status(), StatusCode::SEE_OTHER);
+    let apartment_id = created
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .expect("Location")
+        .trim_start_matches(&format!("/admin/buildings/{building_id}/apartments/"))
+        .to_string();
+    let apt_url = format!(
+        "{}/admin/buildings/{building_id}/apartments/{apartment_id}",
+        h.base_url
+    );
+    let _current = basic_auth(client.post(format!("{apt_url}/ownerships")))
+        .form(&[
+            ("name", "Otto"),
+            ("email", "otto@example.com"),
+            ("start_date", current_start.as_str()),
+        ])
+        .send()
+        .await
+        .expect("add current owner");
+
+    let owners = queries::list_ownerships(&h.pool, &apartment_id)
+        .await
+        .expect("list ownerships");
+    let otto = owners
+        .iter()
+        .find(|o| o.name == "Otto")
+        .expect("current owner");
+    let owner_url = format!("{apt_url}/ownerships/{}", otto.id);
+    let update = |fields: &[(&str, &str)]| {
+        let mut all = vec![
+            ("name", "Otto"),
+            ("email", "otto@example.com"),
+            ("start_date", current_start.as_str()),
+        ];
+        all.extend_from_slice(fields);
+        basic_auth(client.post(owner_url.clone())).form(&all).send()
+    };
+
+    // An end date on/after today: no warning.
+    let later = days_ago(-30);
+    let future = update(&[("end_date", later.as_str())])
+        .await
+        .expect("set future end date");
+    assert_eq!(future.status(), StatusCode::SEE_OTHER, "no warning needed");
+
+    // An end date before today: warning + confirmation.
+    let early = days_ago(30);
+    let warn = update(&[("end_date", early.as_str())])
+        .await
+        .expect("set early end date");
+    assert_eq!(warn.status(), StatusCode::OK, "warning is not a rejection");
+    let warn_body = warn.text().await.expect("warning body");
+    assert!(
+        warn_body.contains("keinen Eigentümer mehr"),
+        "warning about losing the owner, got {warn_body:?}"
+    );
+    assert!(
+        warn_body.contains(r#"name="confirm_end" value="yes""#)
+            && warn_body.contains(r#"name="confirm_end" value="no""#),
+        "warning offers yes/no buttons, got {warn_body:?}"
+    );
+
+    let declined = update(&[("end_date", early.as_str()), ("confirm_end", "no")])
+        .await
+        .expect("decline early end");
+    assert_eq!(declined.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        queries::get_ownership(&h.pool, &otto.id)
+            .await
+            .expect("get ownership")
+            .expect("ownership exists")
+            .end_date
+            .as_deref(),
+        Some(later.as_str()),
+        "declined end date is not applied"
+    );
+
+    let confirmed = update(&[("end_date", early.as_str()), ("confirm_end", "yes")])
+        .await
+        .expect("confirm early end");
+    assert_eq!(confirmed.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        queries::get_ownership(&h.pool, &otto.id)
+            .await
+            .expect("get ownership")
+            .expect("ownership exists")
+            .end_date
+            .as_deref(),
+        Some(early.as_str()),
+        "confirmed end date is applied"
+    );
+}
+
+/// A chain-gap rejection names the previous period's end date and the
+/// required next start, so the user sees why e.g. 1.9. is not the day after
+/// 30.8. (end dates are inclusive; the successor must start on 31.8.).
+#[tokio::test]
+async fn gap_rejection_names_the_previous_end_date() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    // Relative dates: previous period ends `prev` (two days before `too_late`),
+    // so the successor would have to start on `next` — `too_late` skips a day.
+    let prev = days_ago(30);
+    let next = days_ago(29);
+    let too_late = days_ago(28);
+
+    // Building owners.
+    let building_id = create_building(&h, &client, "Einzeleigentümerhaus").await;
+    let first = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/building_owners",
+        h.base_url
+    )))
+    .form(&[
+        ("name", "Deutsche Wohnbau SE"),
+        ("email", "service@deutsche-wohnbau.example"),
+        ("start_date", days_ago(400).as_str()),
+        ("end_date", prev.as_str()),
+    ])
+    .send()
+    .await
+    .expect("create first building owner");
+    assert_eq!(first.status(), StatusCode::SEE_OTHER);
+
+    let skip = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/building_owners",
+        h.base_url
+    )))
+    .form(&[
+        ("name", "Berlin Wohnen GmbH"),
+        ("email", "kontakt@berlin-wohnen.example"),
+        ("start_date", too_late.as_str()),
+    ])
+    .send()
+    .await
+    .expect("create building owner in a gap");
+    assert_eq!(skip.status(), StatusCode::BAD_REQUEST);
+    let body = skip.text().await.expect("rejection body");
+    assert!(
+        body.contains(&format!("endet am {prev}"))
+            && body.contains(&format!("muss am {next} liegen")),
+        "gap rejection names the previous end and the required start, got {body:?}"
+    );
+
+    // Apartment ownerships.
+    let weg = create_building(&h, &client, "WEG-Haus").await;
+    let apt = basic_auth(client.post(format!("{}/admin/buildings/{weg}/apartments", h.base_url)))
+        .form(&[
+            ("name", "EG links"),
+            ("description", ""),
+            ("owner_name", "Ursprünglicher Eigentümer"),
+            ("owner_email", "urspruenglich@example.com"),
+            ("owner_start_date", days_ago(500).as_str()),
+            ("owner_end_date", prev.as_str()),
+        ])
+        .send()
+        .await
+        .expect("create apartment with initial owner");
+    assert_eq!(apt.status(), StatusCode::SEE_OTHER);
+    let apartment_id = apt
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .expect("Location")
+        .trim_start_matches(&format!("/admin/buildings/{weg}/apartments/"))
+        .to_string();
+
+    let skip = basic_auth(client.post(format!(
+        "{}/admin/buildings/{weg}/apartments/{apartment_id}/ownerships",
+        h.base_url
+    )))
+    .form(&[
+        ("name", "Otto"),
+        ("email", "otto@example.com"),
+        ("start_date", too_late.as_str()),
+    ])
+    .send()
+    .await
+    .expect("create ownership in a gap");
+    assert_eq!(skip.status(), StatusCode::BAD_REQUEST);
+    let body = skip.text().await.expect("rejection body");
+    assert!(
+        body.contains(&format!("endet am {prev}"))
+            && body.contains(&format!("muss am {next} liegen")),
+        "ownership gap rejection names the previous end and the required start, got {body:?}"
+    );
+
+    // Starting on the day after the previous end is accepted.
+    let tiled = basic_auth(client.post(format!(
+        "{}/admin/buildings/{weg}/apartments/{apartment_id}/ownerships",
+        h.base_url
+    )))
+    .form(&[
+        ("name", "Otto"),
+        ("email", "otto@example.com"),
+        ("start_date", next.as_str()),
+    ])
+    .send()
+    .await
+    .expect("create ownership on the day after");
+    assert_eq!(tiled.status(), StatusCode::SEE_OTHER);
 }
 
 /// One person can own a whole building AND an apartment in another building

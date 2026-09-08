@@ -273,6 +273,9 @@ pub struct OwnershipsEditTemplate {
     pub error: Option<String>,
     /// Input values: the record's values, or the submitted ones after a failed update.
     pub form: OwnershipForm,
+    /// Shown above the form when the submitted end date would drop today's
+    /// coverage: we ask whether the end date shall really be set.
+    pub end_warning: Option<EndDateWarning>,
     /// Known owners, offered as suggestions on the name/e-mail fields.
     pub people: Vec<Person>,
 }
@@ -1230,6 +1233,16 @@ pub struct TenancyConfirmation {
     pub new_start: String,
 }
 
+/// Shown when an edit would set the currently-covering period's end date
+/// before today, leaving the apartment or building without a covering owner
+/// until a new one is recorded.
+pub struct EndDateWarning {
+    /// The proposed end date (before today).
+    pub end_date: String,
+    /// The day after the proposed end date; the coverage ends then.
+    pub uncovered_from: String,
+}
+
 /// The day before the given canonical YYYY-MM-DD date, if it parses.
 fn previous_day(date: &str) -> Option<String> {
     NaiveDate::parse_from_str(date, "%Y-%m-%d").ok().map(|d| {
@@ -1237,6 +1250,43 @@ fn previous_day(date: &str) -> Option<String> {
             .format("%Y-%m-%d")
             .to_string()
     })
+}
+
+/// The day after the given canonical YYYY-MM-DD date, if it parses.
+fn next_day(date: &str) -> Option<String> {
+    NaiveDate::parse_from_str(date, "%Y-%m-%d").ok().map(|d| {
+        (d + chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string()
+    })
+}
+
+/// The warning shown when an edit would set a currently-covering period's end
+/// date before today.
+fn end_date_warning(end_date: &str) -> EndDateWarning {
+    EndDateWarning {
+        end_date: end_date.to_string(),
+        uncovered_from: next_day(end_date).unwrap_or_else(|| end_date.to_string()),
+    }
+}
+
+/// Whether setting the period's end date to `new_end` drops its coverage of
+/// `today`: the period currently covers today and would end before it. Used to
+/// warn before applying such an edit (the periods tile the timeline, so no
+/// other period can take over).
+fn end_drops_today_coverage(
+    existing_start: &str,
+    existing_end: Option<&str>,
+    new_end: Option<NaiveDate>,
+    today: NaiveDate,
+) -> bool {
+    let covers_today = NaiveDate::parse_from_str(existing_start, "%Y-%m-%d")
+        .map(|s| s <= today)
+        .unwrap_or(false)
+        && existing_end
+            .and_then(|e| NaiveDate::parse_from_str(e, "%Y-%m-%d").ok())
+            .is_none_or(|e| e >= today);
+    covers_today && new_end.is_some_and(|d| d < today)
 }
 
 #[derive(serde::Deserialize)]
@@ -1250,6 +1300,11 @@ pub struct OwnershipForm {
     /// submission; only present when the confirmation form was shown.
     #[serde(default)]
     pub close_previous: Option<String>,
+    /// "yes"/"no" answer to the question whether the end date shall really be
+    /// set before today (the apartment would lose its covering owner). Absent
+    /// on the first submission; only present when the warning was shown.
+    #[serde(default)]
+    pub confirm_end: Option<String>,
 }
 
 fn normalize_end_date(end_date: Option<&str>) -> Option<&str> {
@@ -1371,6 +1426,34 @@ pub async fn ownerships_create(
         }
     }
 
+    // The start is neither covered nor tiled: if an earlier period already
+    // ended, the new one must begin on the day after it. Check here so the
+    // rejection can name the actual dates (SQLite trigger messages cannot
+    // interpolate values); the database still enforces the rule.
+    if let Some(prev_end) =
+        queries::get_ownership_end_before(&pool, &apartment_id, &form.start_date)
+            .await
+            .ok()
+            .flatten()
+    {
+        if let Some(next) = next_day(&prev_end) {
+            if next != form.start_date {
+                return render_apartment_show_error(
+                    &pool,
+                    &building_id,
+                    &apartment_id,
+                    format!(
+                        "Das Eigentum muss am Tag nach dem Ende des vorherigen Eigentums beginnen; das vorherige Eigentum endet am {prev_end}, der neue Beginn muss am {next} liegen (nicht am {}).",
+                        form.start_date
+                    ),
+                    Some(form),
+                    None,
+                )
+                .await;
+            }
+        }
+    }
+
     // No previous ownership covering the new start (the chain is already
     // tiled): create directly; the database enforces the remaining rules.
     let result = queries::create_ownership(
@@ -1412,6 +1495,7 @@ pub async fn ownerships_edit(
                 start_date: ownership.start_date.clone(),
                 end_date: ownership.end_date.clone(),
                 close_previous: None,
+                confirm_end: None,
             };
             render(OwnershipsEditTemplate {
                 title: "Eigentümer bearbeiten".to_string(),
@@ -1420,6 +1504,7 @@ pub async fn ownerships_edit(
                 ownership,
                 error: None,
                 form,
+                end_warning: None,
                 people,
             })
         }
@@ -1457,6 +1542,67 @@ async fn render_ownership_edit_error(
         ownership: ownership.clone(),
         error: Some(error),
         form,
+        end_warning: None,
+        people,
+    })
+}
+
+/// The warning if setting `new_end` on `ownership` would drop the apartment's
+/// coverage of today (unless a covering building owner keeps the apartment
+/// covered — the legacy 0010 cleanup case).
+async fn ownership_end_date_warning(
+    pool: &Db,
+    apartment: &Apartment,
+    ownership: &Ownership,
+    new_end: Option<&str>,
+) -> Option<EndDateWarning> {
+    let new_end = new_end?;
+    let new_end_date = NaiveDate::parse_from_str(new_end, "%Y-%m-%d").ok()?;
+    if !end_drops_today_coverage(
+        &ownership.start_date,
+        ownership.end_date.as_deref(),
+        Some(new_end_date),
+        Local::now().date_naive(),
+    ) {
+        return None;
+    }
+    if queries::get_current_building_owner(pool, &apartment.building_id)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return None;
+    }
+    Some(end_date_warning(new_end))
+}
+
+/// Re-render the ownership edit page asking whether the end date shall really
+/// be set before today, preserving the submitted values.
+async fn render_ownership_edit_warning(
+    pool: &Db,
+    building_id: &str,
+    apartment: &Apartment,
+    ownership: &Ownership,
+    form: OwnershipForm,
+    end_warning: EndDateWarning,
+) -> axum::response::Response {
+    let building = match load_building(pool, building_id).await {
+        Ok(b) => b,
+        Err(err) => return err.into_response(),
+    };
+    let people = match load_people(pool).await {
+        Ok(p) => p,
+        Err(err) => return err.into_response(),
+    };
+    render(OwnershipsEditTemplate {
+        title: "Eigentümer bearbeiten".to_string(),
+        building,
+        apartment: apartment.clone(),
+        ownership: ownership.clone(),
+        error: None,
+        form,
+        end_warning: Some(end_warning),
         people,
     })
 }
@@ -1482,6 +1628,32 @@ pub async fn ownerships_update(
     };
 
     let end_opt = normalize_end_date(form.end_date.as_deref());
+
+    // Setting the end date of the currently-covering period before today would
+    // leave the apartment without an owner; ask for confirmation first.
+    if let Some(warning) = ownership_end_date_warning(&pool, &apartment, &ownership, end_opt).await
+    {
+        match form.confirm_end.as_deref() {
+            None => {
+                return render_ownership_edit_warning(
+                    &pool,
+                    &building_id,
+                    &apartment,
+                    &ownership,
+                    form,
+                    warning,
+                )
+                .await;
+            }
+            Some("no") => {
+                return Redirect::to(&format!(
+                    "/admin/buildings/{building_id}/apartments/{apartment_id}/ownerships/{ownership_id}/edit"
+                ))
+                .into_response();
+            }
+            _ => {} // "yes": apply the update below.
+        }
+    }
 
     // Field checks and chain tiling are enforced by the database (triggers);
     // its rejection message is shown inline.
@@ -2167,6 +2339,11 @@ pub struct BuildingOwnerForm {
     /// submission; only present when the confirmation form was shown.
     #[serde(default)]
     pub close_previous: Option<String>,
+    /// "yes"/"no" answer to the question whether the end date shall really be
+    /// set before today (the building would lose its covering owner). Absent
+    /// on the first submission; only present when the warning was shown.
+    #[serde(default)]
+    pub confirm_end: Option<String>,
 }
 
 /// The question asked when adding a building owner would start before the
@@ -2191,6 +2368,9 @@ pub struct BuildingOwnerFormTemplate {
     /// previous one ends: we ask whether the previous period shall end the day
     /// before the new one begins.
     pub confirmation: Option<BuildingOwnerConfirmation>,
+    /// Shown above the form when the submitted end date would drop today's
+    /// coverage: we ask whether the end date shall really be set.
+    pub end_warning: Option<EndDateWarning>,
     /// Form action URL (create or update endpoint).
     pub action: String,
     pub submit_label: String,
@@ -2200,12 +2380,14 @@ pub struct BuildingOwnerFormTemplate {
 }
 
 /// One of the possible notices shown above the building-owner form: either a
-/// rejection message from a failed submission or the confirmation question
+/// rejection message from a failed submission, the confirmation question
 /// whether the previous building owner shall end on the day before the new one
-/// begins.
+/// begins, or the warning that a submitted end date would drop today's
+/// coverage.
 enum BuildingOwnerFormNotice {
     Error(String),
     Confirmation(BuildingOwnerConfirmation),
+    EndDateWarning(EndDateWarning),
 }
 
 fn building_owner_form_template(
@@ -2217,10 +2399,13 @@ fn building_owner_form_template(
     owner_id: Option<&str>,
     people: Vec<Person>,
 ) -> BuildingOwnerFormTemplate {
-    let (error, confirmation) = match notice {
-        None => (None, None),
-        Some(BuildingOwnerFormNotice::Error(msg)) => (Some(msg), None),
-        Some(BuildingOwnerFormNotice::Confirmation(confirmation)) => (None, Some(confirmation)),
+    let (error, confirmation, end_warning) = match notice {
+        None => (None, None, None),
+        Some(BuildingOwnerFormNotice::Error(msg)) => (Some(msg), None, None),
+        Some(BuildingOwnerFormNotice::Confirmation(confirmation)) => {
+            (None, Some(confirmation), None)
+        }
+        Some(BuildingOwnerFormNotice::EndDateWarning(warning)) => (None, None, Some(warning)),
     };
     let action = match owner_id {
         Some(owner_id) => format!("/admin/buildings/{building_id}/building_owners/{owner_id}"),
@@ -2238,6 +2423,7 @@ fn building_owner_form_template(
         error,
         form,
         confirmation,
+        end_warning,
         action,
         submit_label,
         people,
@@ -2266,6 +2452,7 @@ pub async fn building_owners_new(
             start_date: String::new(),
             end_date: None,
             close_previous: None,
+            confirm_end: None,
         },
         &building_id,
         None,
@@ -2418,6 +2605,42 @@ pub async fn building_owners_create(
         }
     }
 
+    // The start is neither covered nor tiled: if an earlier period already
+    // ended, the new one must begin on the day after it. Check here so the
+    // rejection can name the actual dates (SQLite trigger messages cannot
+    // interpolate values); the database still enforces the rule.
+    if let Some(prev_end) =
+        queries::get_building_owner_end_before(&pool, &building_id, &form.start_date)
+            .await
+            .ok()
+            .flatten()
+    {
+        if let Some(next) = next_day(&prev_end) {
+            if next != form.start_date {
+                let building = match load_building(&pool, &building_id).await {
+                    Ok(b) => b,
+                    Err(err) => return err.into_response(),
+                };
+                let people = match load_people(&pool).await {
+                    Ok(p) => p,
+                    Err(err) => return err.into_response(),
+                };
+                return render_bad_request(building_owner_form_template(
+                    "Gebäudeeigentümer hinzufügen".to_string(),
+                    building,
+                    Some(BuildingOwnerFormNotice::Error(format!(
+                        "Das Gebäudeeigentum muss am Tag nach dem Ende des vorherigen Gebäudeeigentums beginnen; das vorherige Gebäudeeigentum endet am {prev_end}, der neue Beginn muss am {next} liegen (nicht am {}).",
+                        form.start_date
+                    ))),
+                    form,
+                    &building_id,
+                    None,
+                    people,
+                ));
+            }
+        }
+    }
+
     // No previous building owner covering the new start (the chain is already
     // tiled): create directly; the database enforces the remaining rules.
     let result = queries::create_building_owner(
@@ -2455,6 +2678,7 @@ pub async fn building_owners_edit(
                 start_date: owner.start_date.clone(),
                 end_date: owner.end_date.clone(),
                 close_previous: None,
+                confirm_end: None,
             };
             render(building_owner_form_template(
                 "Gebäudeeigentümer bearbeiten".to_string(),
@@ -2475,6 +2699,34 @@ pub async fn building_owners_edit(
     }
 }
 
+/// The warning if setting `new_end` on `owner` would drop the building's
+/// coverage of today (only relevant while apartments actually depend on the
+/// building owner).
+async fn building_owner_end_date_warning(
+    pool: &Db,
+    building_id: &str,
+    owner: &BuildingOwner,
+    new_end: Option<&str>,
+) -> Option<EndDateWarning> {
+    let new_end = new_end?;
+    let new_end_date = NaiveDate::parse_from_str(new_end, "%Y-%m-%d").ok()?;
+    if !end_drops_today_coverage(
+        &owner.start_date,
+        owner.end_date.as_deref(),
+        Some(new_end_date),
+        Local::now().date_naive(),
+    ) {
+        return None;
+    }
+    if !queries::building_has_apartments_depending_on_building_owner(pool, building_id)
+        .await
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    Some(end_date_warning(new_end))
+}
+
 pub async fn building_owners_update(
     Path((building_id, owner_id)): Path<(String, String)>,
     State(pool): State<Db>,
@@ -2484,15 +2736,51 @@ pub async fn building_owners_update(
         return err.into_response();
     }
     // Ensure the building owner belongs to this building.
-    match queries::get_building_owner(&pool, &owner_id).await {
+    let existing = match queries::get_building_owner(&pool, &owner_id).await {
         Ok(Some(existing)) => {
             if existing.building_id != building_id {
                 return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
             }
+            existing
         }
         _ => return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
-    }
+    };
     let end_opt = normalize_end_date(form.end_date.as_deref());
+
+    // Setting the end date of the currently-covering period before today would
+    // leave the building without an owner; ask for confirmation first.
+    if let Some(warning) =
+        building_owner_end_date_warning(&pool, &building_id, &existing, end_opt).await
+    {
+        match form.confirm_end.as_deref() {
+            None => {
+                let building = match load_building(&pool, &building_id).await {
+                    Ok(b) => b,
+                    Err(err) => return err.into_response(),
+                };
+                let people = match load_people(&pool).await {
+                    Ok(p) => p,
+                    Err(err) => return err.into_response(),
+                };
+                return render(building_owner_form_template(
+                    "Gebäudeeigentümer bearbeiten".to_string(),
+                    building,
+                    Some(BuildingOwnerFormNotice::EndDateWarning(warning)),
+                    form,
+                    &building_id,
+                    Some(&owner_id),
+                    people,
+                ));
+            }
+            Some("no") => {
+                return Redirect::to(&format!(
+                    "/admin/buildings/{building_id}/building_owners/{owner_id}/edit"
+                ))
+                .into_response();
+            }
+            _ => {} // "yes": apply the update below.
+        }
+    }
 
     // Field checks and chain tiling are enforced by the database (triggers);
     // its rejection message is shown inline.

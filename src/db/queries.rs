@@ -649,6 +649,30 @@ pub async fn get_ownership_on(
     .await
 }
 
+/// The latest end date among the ownership periods of the apartment that
+/// ended strictly before `date`. Used to enrich the chain-gap rejection
+/// message with the actual date (SQLite trigger messages cannot interpolate
+/// values).
+pub async fn get_ownership_end_before(
+    pool: &Db,
+    apartment_id: &str,
+    date: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"
+        SELECT MAX(o.end_date)
+        FROM ownerships o
+        WHERE o.apartment_id = ?
+          AND o.end_date IS NOT NULL
+          AND o.end_date < ?
+        "#,
+    )
+    .bind(apartment_id)
+    .bind(date)
+    .fetch_one(pool)
+    .await
+}
+
 pub async fn create_ownership(
     pool: &Db,
     apartment_id: &str,
@@ -860,6 +884,54 @@ pub async fn get_building_owner_on(
     .bind(date)
     .fetch_optional(pool)
     .await
+}
+
+/// The latest end date among the building-owner periods that ended strictly
+/// before `date`. Used to enrich the chain-gap rejection message with the
+/// actual date (SQLite trigger messages cannot interpolate values).
+pub async fn get_building_owner_end_before(
+    pool: &Db,
+    building_id: &str,
+    date: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"
+        SELECT MAX(o.end_date)
+        FROM building_owners o
+        WHERE o.building_id = ?
+          AND o.end_date IS NOT NULL
+          AND o.end_date < ?
+        "#,
+    )
+    .bind(building_id)
+    .bind(date)
+    .fetch_one(pool)
+    .await
+}
+
+/// Whether any apartment of the building currently depends on the building
+/// owner (has no per-apartment ownership covering the current date).
+pub async fn building_has_apartments_depending_on_building_owner(
+    pool: &Db,
+    building_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM apartments a
+        WHERE a.building_id = ?
+          AND NOT EXISTS (
+            SELECT 1 FROM ownerships o
+            WHERE o.apartment_id = a.id
+              AND o.start_date <= date('now', 'localtime')
+              AND (o.end_date IS NULL OR o.end_date >= date('now', 'localtime'))
+          )
+        "#,
+    )
+    .bind(building_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(count > 0)
 }
 
 pub async fn create_building_owner(
@@ -1537,8 +1609,10 @@ mod tests {
             &NewOwner {
                 name: "Alice",
                 email: "alice@example.com",
+                // A closed, past period so the "last ownership" guard (and
+                // not the current-date guard) is the one that fires.
                 start_date: "2024-01-01",
-                end_date: None,
+                end_date: Some("2024-12-31"),
             },
         )
         .await
@@ -1707,8 +1781,11 @@ mod tests {
             &NewOwner {
                 name: "Ada",
                 email: "ada@example.com",
-                start_date: "2026-01-01",
-                end_date: Some("2026-06-30"),
+                // Past, closed periods so the chain does not cover today: the
+                // delete guards tested here are `guard_middle`/`guard_last`
+                // (0011's current-date guard is covered by the e2e tests).
+                start_date: "2022-01-01",
+                end_date: Some("2022-06-30"),
             },
         )
         .await
@@ -1731,14 +1808,14 @@ mod tests {
         // Overlapping the existing period is rejected.
         reject(
             "überschneidet",
-            create_ownership(&pool, &apt.id, "Bo", "bo@example.com", "2026-06-01", None)
+            create_ownership(&pool, &apt.id, "Bo", "bo@example.com", "2022-06-01", None)
                 .await
                 .expect_err("overlap must be rejected"),
         );
         // A gap after the previous period is rejected.
         reject(
             "muss am Tag nach dem Ende",
-            create_ownership(&pool, &apt.id, "Bo", "bo@example.com", "2026-07-02", None)
+            create_ownership(&pool, &apt.id, "Bo", "bo@example.com", "2022-07-02", None)
                 .await
                 .expect_err("gap must be rejected"),
         );
@@ -1748,15 +1825,22 @@ mod tests {
             &apt.id,
             "Bo",
             "bo@example.com",
-            "2026-07-01",
-            Some("2026-12-31"),
+            "2022-07-01",
+            Some("2022-12-31"),
         )
         .await
         .expect("tiled continuation");
-        // And one more, keeping the chain tiled.
-        create_ownership(&pool, &apt.id, "Cy", "cy@example.com", "2027-01-01", None)
-            .await
-            .expect("tiled successor");
+        // And one more, keeping the chain tiled (closed, like the others).
+        create_ownership(
+            &pool,
+            &apt.id,
+            "Cy",
+            "cy@example.com",
+            "2023-01-01",
+            Some("2023-12-31"),
+        )
+        .await
+        .expect("tiled successor");
 
         // Updating Bo into a gap (starting the day after Ada's end) is rejected.
         reject(
@@ -1766,8 +1850,8 @@ mod tests {
                 &bo.id,
                 "Bo",
                 "bo@example.com",
-                "2026-07-02",
-                Some("2026-12-31"),
+                "2022-07-02",
+                Some("2022-12-31"),
             )
             .await
             .expect_err("gap update must be rejected"),
@@ -1780,8 +1864,8 @@ mod tests {
                 &bo.id,
                 "Bo",
                 "bo@example.com",
-                "2026-06-01",
-                Some("2026-12-31"),
+                "2022-06-01",
+                Some("2022-12-31"),
             )
             .await
             .expect_err("overlap update must be rejected"),
@@ -2190,7 +2274,8 @@ mod tests {
         );
 
         // The last building owner cannot be deleted while an apartment depends
-        // on it.
+        // on it (0011's current-date guard; the message is shared with the
+        // sole-row guard of 0005).
         let owner_id = list_building_owners(&pool, &building.id)
             .await
             .expect("list building owners")[0]
@@ -2203,7 +2288,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("letzte Gebäudeeigentümer"));
+            .contains("kann nicht gelöscht werden"));
 
         // The two ownership forms are mutually exclusive (0010): this
         // building-owned apartment must not be able to acquire an ownership
@@ -2331,8 +2416,10 @@ mod tests {
             &NewOwner {
                 name: "Alice",
                 email: "alice@example.com",
-                start_date: "2026-01-01",
-                end_date: None,
+                // A closed, past period so the sole-row guard (and not the
+                // current-date guard) is the one that fires below.
+                start_date: "2025-01-01",
+                end_date: Some("2025-12-31"),
             },
         )
         .await
@@ -2518,7 +2605,7 @@ mod tests {
             .await
             .expect("create building");
 
-        // Two tiled periods: 2023 (Ada) and 2024 (open-ended, Bo). The 2023
+        // Two tiled periods: 2023 (Ada) and 2024 (closed, Bo). The 2023
         // period may be deleted (it is not the last one), which would orphan
         // its person — the cleanup trigger must remove Ada.
         let apt = create_apartment(
@@ -2535,9 +2622,16 @@ mod tests {
         )
         .await
         .expect("create apartment");
-        let bo = create_ownership(&pool, &apt.id, "Bo", "bo@example.com", "2024-01-01", None)
-            .await
-            .expect("create successor ownership");
+        let bo = create_ownership(
+            &pool,
+            &apt.id,
+            "Bo",
+            "bo@example.com",
+            "2024-01-01",
+            Some("2024-12-31"),
+        )
+        .await
+        .expect("create successor ownership");
         assert_eq!(list_people(&pool).await.expect("list people").len(), 2);
 
         let ada_id = list_ownerships(&pool, &apt.id)

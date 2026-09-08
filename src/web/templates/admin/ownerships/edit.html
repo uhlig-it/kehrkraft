@@ -14,6 +14,12 @@
 
 <div class="card">
   {% include "admin/_error.html" %}
+  {% if let Some(w) = end_warning %}
+  <div class="alert alert-warning" role="alert">
+    <p>Das Enddatum <strong>{{ w.end_date }}</strong> liegt vor dem heutigen Tag. Ab dem <strong>{{ w.uncovered_from }}</strong> hätte die Wohnung bis zur Erfassung eines neuen Eigentümers keinen Eigentümer mehr.</p>
+    <p class="muted">Wenn Sie das nicht beabsichtigen, wählen Sie „Nein, nicht beenden" oder ändern Sie das Enddatum.</p>
+  </div>
+  {% endif %}
   <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ ownership.id }}">
     <p class="muted">Name und E-Mail-Adresse gehören zur Person und gelten damit für alle Zeiträume, in denen sie als Eigentümerin oder Eigentümer geführt wird. Ein neues „Eigentum ab“ muss lückenlos an die übrigen Zeiträume der Wohnung anschließen.</p>
     <label class="field">
@@ -39,7 +45,12 @@
     </label>
 
     <div class="form-actions">
+      {% if end_warning.is_some() %}
+      <button type="submit" name="confirm_end" value="yes" class="btn btn-primary">Ja, dennoch beenden</button>
+      <button type="submit" name="confirm_end" value="no" class="btn btn-secondary">Nein, nicht beenden</button>
+      {% else %}
       <button type="submit" class="btn btn-primary">Änderungen speichern</button>
+      {% endif %}
       <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">Abbrechen</a>
     </div>
   </form>

@@ -20,6 +20,12 @@
     <p class="muted">Wenn Sie das nicht bestätigen, schlägt das Anlegen des neuen Gebäudeeigentümers fehl.</p>
   </div>
   {% endif %}
+  {% if let Some(w) = end_warning %}
+  <div class="alert alert-warning" role="alert">
+    <p>Das Enddatum <strong>{{ w.end_date }}</strong> liegt vor dem heutigen Tag. Ab dem <strong>{{ w.uncovered_from }}</strong> hätte das Gebäude bis zur Erfassung eines neuen Gebäudeeigentümers keinen Eigentümer mehr.</p>
+    <p class="muted">Wenn Sie das nicht beabsichtigen, wählen Sie „Nein, nicht beenden" oder ändern Sie das Enddatum.</p>
+  </div>
+  {% endif %}
   <form method="post" action="{{ action }}">
     <p class="muted">Name und E-Mail-Adresse gehören zur Person und gelten damit für alle Zeiträume, in denen sie als Eigentümerin oder Eigentümer geführt wird. Ein neues „Eigentum ab“ muss an den vorherigen Gebäudeeigentümer anschließen.</p>
     <label class="field">
@@ -48,6 +54,9 @@
       {% if confirmation.is_some() %}
       <button type="submit" name="close_previous" value="yes" class="btn btn-primary">Ja, bisheriges Gebäudeeigentum beenden und hinzufügen</button>
       <button type="submit" name="close_previous" value="no" class="btn btn-secondary">Nein, nicht beenden</button>
+      {% elif end_warning.is_some() %}
+      <button type="submit" name="confirm_end" value="yes" class="btn btn-primary">Ja, dennoch beenden</button>
+      <button type="submit" name="confirm_end" value="no" class="btn btn-secondary">Nein, nicht beenden</button>
       {% else %}
       <button type="submit" class="btn btn-primary">{{ submit_label }}</button>
       {% endif %}
