@@ -622,6 +622,33 @@ pub async fn get_ownership(pool: &Db, id: &str) -> Result<Option<Ownership>, sql
     .await
 }
 
+/// The ownership covering `date` (started on or before it and not ended yet),
+/// if any. With the seamless chain an apartment has at most one such period.
+pub async fn get_ownership_on(
+    pool: &Db,
+    apartment_id: &str,
+    date: &str,
+) -> Result<Option<Ownership>, sqlx::Error> {
+    sqlx::query_as::<_, Ownership>(
+        r#"
+        SELECT o.id, o.apartment_id, o.person_id, p.name, p.email,
+               o.start_date, o.end_date, o.created_at
+        FROM ownerships o
+        INNER JOIN people p ON p.id = o.person_id
+        WHERE o.apartment_id = ?
+          AND o.start_date <= ?
+          AND (o.end_date IS NULL OR o.end_date >= ?)
+        ORDER BY o.start_date DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(apartment_id)
+    .bind(date)
+    .bind(date)
+    .fetch_optional(pool)
+    .await
+}
+
 pub async fn create_ownership(
     pool: &Db,
     apartment_id: &str,
@@ -633,6 +660,56 @@ pub async fn create_ownership(
     let mut tx = pool.begin().await?;
     // The person insert is part of the transaction: a chain-tiling or date
     // rejection rolls it back and leaves no person without a period behind.
+    let person_id = resolve_person(&mut tx, name, email).await?;
+    let id = gen_token();
+    sqlx::query(
+        r#"
+        INSERT INTO ownerships (id, apartment_id, person_id, start_date, end_date)
+        VALUES (?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(&id)
+    .bind(apartment_id)
+    .bind(person_id)
+    .bind(start_date)
+    .bind(end_date)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    get_ownership(pool, &id)
+        .await
+        .map(|o| o.expect("ownership just inserted"))
+}
+
+/// Identifies the previous period that a new period replaces: its id and the
+/// date on which it shall end (normally the day before the new period starts).
+/// Used by the "closing previous" create operations.
+pub struct PreviousPeriod<'a> {
+    pub id: &'a str,
+    pub end_date: &'a str,
+}
+
+/// Create a new ownership and simultaneously close the previous one on the
+/// day before the new period begins, in one transaction. Used when the user
+/// confirms that the previous owner's open period shall end the day before
+/// the new ownership starts. The chain-tiling triggers validate the combined
+/// change; on rejection everything rolls back.
+pub async fn create_ownership_closing_previous(
+    pool: &Db,
+    apartment_id: &str,
+    previous: PreviousPeriod<'_>,
+    name: &str,
+    email: &str,
+    start_date: &str,
+    end_date: Option<&str>,
+) -> Result<Ownership, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE ownerships SET end_date = ? WHERE id = ?")
+        .bind(previous.end_date)
+        .bind(previous.id)
+        .execute(&mut *tx)
+        .await?;
     let person_id = resolve_person(&mut tx, name, email).await?;
     let id = gen_token();
     sqlx::query(
@@ -757,6 +834,34 @@ pub async fn get_building_owner(pool: &Db, id: &str) -> Result<Option<BuildingOw
     .await
 }
 
+/// The building-owner period covering `date` (started on or before it and not
+/// ended yet), if any. With the seamless chain a building has at most one such
+/// period.
+pub async fn get_building_owner_on(
+    pool: &Db,
+    building_id: &str,
+    date: &str,
+) -> Result<Option<BuildingOwner>, sqlx::Error> {
+    sqlx::query_as::<_, BuildingOwner>(
+        r#"
+        SELECT o.id, o.building_id, o.person_id, p.name, p.email,
+               o.start_date, o.end_date, o.created_at
+        FROM building_owners o
+        INNER JOIN people p ON p.id = o.person_id
+        WHERE o.building_id = ?
+          AND o.start_date <= ?
+          AND (o.end_date IS NULL OR o.end_date >= ?)
+        ORDER BY o.start_date DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(building_id)
+    .bind(date)
+    .bind(date)
+    .fetch_optional(pool)
+    .await
+}
+
 pub async fn create_building_owner(
     pool: &Db,
     building_id: &str,
@@ -768,6 +873,48 @@ pub async fn create_building_owner(
     let mut tx = pool.begin().await?;
     // The person insert is part of the transaction: a chain-tiling or date
     // rejection rolls it back and leaves no person without a period behind.
+    let person_id = resolve_person(&mut tx, name, email).await?;
+    let id = gen_token();
+    sqlx::query(
+        r#"
+        INSERT INTO building_owners (id, building_id, person_id, start_date, end_date)
+        VALUES (?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(&id)
+    .bind(building_id)
+    .bind(person_id)
+    .bind(start_date)
+    .bind(end_date)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    get_building_owner(pool, &id)
+        .await
+        .map(|o| o.expect("building owner just inserted"))
+}
+
+/// Create a new building-owner period and simultaneously close the previous
+/// one on the day before the new period begins, in one transaction. Used when
+/// the user confirms that the previous building owner's open period shall end
+/// the day before the new building owner starts. The chain-tiling triggers
+/// validate the combined change; on rejection everything rolls back.
+pub async fn create_building_owner_closing_previous(
+    pool: &Db,
+    building_id: &str,
+    previous: PreviousPeriod<'_>,
+    name: &str,
+    email: &str,
+    start_date: &str,
+    end_date: Option<&str>,
+) -> Result<BuildingOwner, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE building_owners SET end_date = ? WHERE id = ?")
+        .bind(previous.end_date)
+        .bind(previous.id)
+        .execute(&mut *tx)
+        .await?;
     let person_id = resolve_person(&mut tx, name, email).await?;
     let id = gen_token();
     sqlx::query(
@@ -890,6 +1037,33 @@ pub async fn list_tenancies_for_building(
     .await
 }
 
+/// The tenancy covering `date` (started on or before it and not ended yet),
+/// if any. The no-overlap rule allows at most one such period.
+pub async fn get_tenancy_on(
+    pool: &Db,
+    apartment_id: &str,
+    date: &str,
+) -> Result<Option<Tenancy>, sqlx::Error> {
+    sqlx::query_as::<_, Tenancy>(
+        r#"
+        SELECT t.id, t.apartment_id, t.person_id, p.name, p.email,
+               t.start_date, t.end_date, t.created_at
+        FROM tenancies t
+        INNER JOIN people p ON p.id = t.person_id
+        WHERE t.apartment_id = ?
+          AND t.start_date <= ?
+          AND (t.end_date IS NULL OR t.end_date >= ?)
+        ORDER BY t.start_date DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(apartment_id)
+    .bind(date)
+    .bind(date)
+    .fetch_optional(pool)
+    .await
+}
+
 pub async fn get_tenancy(pool: &Db, id: &str) -> Result<Option<Tenancy>, sqlx::Error> {
     sqlx::query_as::<_, Tenancy>(
         r#"
@@ -916,6 +1090,48 @@ pub async fn create_tenancy(
     let mut tx = pool.begin().await?;
     // The person insert is part of the transaction: an overlap or date
     // rejection rolls it back and leaves no person without a period behind.
+    let person_id = resolve_person(&mut tx, name, email).await?;
+    let id = gen_token();
+    sqlx::query(
+        r#"
+        INSERT INTO tenancies (id, apartment_id, person_id, start_date, end_date)
+        VALUES (?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(&id)
+    .bind(apartment_id)
+    .bind(person_id)
+    .bind(start_date)
+    .bind(end_date)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    get_tenancy(pool, &id)
+        .await
+        .map(|t| t.expect("tenancy just inserted"))
+}
+
+/// Create a new tenancy and simultaneously close the previous one on the day
+/// before the new tenancy begins, in one transaction. Used when the user
+/// confirms that the previous tenant's open period shall end the day before
+/// the new tenancy starts. The no-overlap triggers validate the combined
+/// change; on rejection everything rolls back.
+pub async fn create_tenancy_closing_previous(
+    pool: &Db,
+    apartment_id: &str,
+    previous: PreviousPeriod<'_>,
+    name: &str,
+    email: &str,
+    start_date: &str,
+    end_date: Option<&str>,
+) -> Result<Tenancy, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE tenancies SET end_date = ? WHERE id = ?")
+        .bind(previous.end_date)
+        .bind(previous.id)
+        .execute(&mut *tx)
+        .await?;
     let person_id = resolve_person(&mut tx, name, email).await?;
     let id = gen_token();
     sqlx::query(

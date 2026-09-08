@@ -56,9 +56,15 @@
   {% if has_building_owner %}
   <p class="muted"><em>Das Gebäude gehört als Ganzes dem Gebäudeeigentümer. Eigentümer einzelner Wohnungen gibt es rechtlich nicht, solange das Gebäude nicht in Wohnungseigentum aufgeteilt ist (WEG). Eine solche Aufteilung unterstützt Kehrkraft nicht.</em></p>
   {% else %}
-  <details class="disclosure" {% if owner_form.is_some() %}open{% endif %}>
+  <details class="disclosure" {% if owner_form.is_some() || owner_confirmation.is_some() %}open{% endif %}>
     <summary>Eigentümer hinzufügen</summary>
     {% if owner_form.is_some() %}{% include "admin/_error.html" %}{% endif %}
+    {% if let Some(c) = owner_confirmation %}
+    <div class="alert alert-info" role="alert">
+      <p><strong>{{ c.previous_name }}</strong> ist derzeit als Eigentümerin bzw. Eigentümer über den {{ c.new_start }} hinaus erfasst. Soll das bisherige Eigentum am <strong>{{ c.previous_end }}</strong> (dem Tag vor dem neuen Beginn) enden?</p>
+      <p class="muted">Wenn Sie das nicht bestätigen, schlägt das Anlegen des neuen Eigentums fehl.</p>
+    </div>
+    {% endif %}
     <p class="muted">Bekannte Eigentümer erscheinen bei der Eingabe als Vorschlag; dieselbe E-Mail-Adresse bedeutet dieselbe Person.</p>
     <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships">
       <label class="field">
@@ -80,7 +86,12 @@
         <input type="date" name="end_date" value="{% if let Some(f) = owner_form %}{% if let Some(ed) = f.end_date %}{{ ed }}{% endif %}{% endif %}" />
       </label>
       <div class="form-actions">
+        {% if owner_confirmation.is_some() %}
+        <button type="submit" name="close_previous" value="yes" class="btn btn-primary">Ja, bisheriges Eigentum beenden und hinzufügen</button>
+        <button type="submit" name="close_previous" value="no" class="btn btn-secondary">Nein, nicht beenden</button>
+        {% else %}
         <button type="submit" class="btn btn-primary">Eigentümer hinzufügen</button>
+        {% endif %}
       </div>
     </form>
   </details>
@@ -128,9 +139,15 @@
   </table>
   {% endif %}
 
-  <details class="disclosure" {% if tenant_form.is_some() %}open{% endif %}>
+  <details class="disclosure" {% if tenant_form.is_some() || tenant_confirmation.is_some() %}open{% endif %}>
     <summary>Mieter hinzufügen</summary>
     {% if tenant_form.is_some() %}{% include "admin/_error.html" %}{% endif %}
+    {% if let Some(c) = tenant_confirmation %}
+    <div class="alert alert-info" role="alert">
+      <p>Das bisherige Mietverhältnis von <strong>{{ c.previous_name }}</strong> besteht derzeit über den {{ c.new_start }} hinaus. Soll es am <strong>{{ c.previous_end }}</strong> (dem Tag vor dem neuen Mietbeginn) enden?</p>
+      <p class="muted">Wenn Sie das nicht bestätigen, schlägt das Anlegen des neuen Mietverhältnisses fehl.</p>
+    </div>
+    {% endif %}
     <p class="muted">Bekannte Eigentümer erscheinen bei der Eingabe als Vorschlag; dieselbe E-Mail-Adresse bedeutet dieselbe Person.</p>
     <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies">
       <label class="field">
@@ -152,7 +169,12 @@
         <input type="date" name="end_date" value="{% if let Some(f) = tenant_form %}{% if let Some(ed) = f.end_date %}{{ ed }}{% endif %}{% endif %}" />
       </label>
       <div class="form-actions">
+        {% if tenant_confirmation.is_some() %}
+        <button type="submit" name="close_previous" value="yes" class="btn btn-primary">Ja, bisheriges Mietverhältnis beenden und hinzufügen</button>
+        <button type="submit" name="close_previous" value="no" class="btn btn-secondary">Nein, nicht beenden</button>
+        {% else %}
         <button type="submit" class="btn btn-primary">Mieter hinzufügen</button>
+        {% endif %}
       </div>
     </form>
   </details>

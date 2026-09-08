@@ -457,6 +457,136 @@ async fn building_owner_flow() {
     );
 }
 
+/// Adding a new building owner while the previous one is still current asks
+/// whether the previous building-owner period shall end on the day before the
+/// new one begins. "Yes" closes it and adds the new owner; "No" is told that
+/// the operation would fail. An adjacent (already tiled) start goes through
+/// directly without asking.
+#[tokio::test]
+async fn adding_building_owner_asks_to_close_previous_building_owner() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    let building_id = create_building(&h, &client, "Musterblock").await;
+    let owners_url = format!(
+        "{}/admin/buildings/{building_id}/building_owners",
+        h.base_url
+    );
+
+    // First building-owner period ends June 30.
+    let first = basic_auth(client.post(owners_url.clone()))
+        .form(&[
+            ("name", "Deutsche Wohnbau SE"),
+            ("email", "service@deutsche-wohnbau.example"),
+            ("start_date", "2020-01-01"),
+            ("end_date", "2026-06-30"),
+        ])
+        .send()
+        .await
+        .expect("create building owner");
+    assert_eq!(first.status(), StatusCode::SEE_OTHER);
+
+    // An adjacent (already tiled) start goes through directly without asking.
+    let adjacent = basic_auth(client.post(owners_url.clone()))
+        .form(&[
+            ("name", "Berlin Wohnen GmbH"),
+            ("email", "kontakt@berlin-wohnen.example"),
+            ("start_date", "2026-07-01"),
+        ])
+        .send()
+        .await
+        .expect("create adjacent building owner");
+    assert_eq!(adjacent.status(), StatusCode::SEE_OTHER);
+
+    // The new building owner starts while "Berlin Wohnen" is still current:
+    // the first submission asks whether it shall end on the day before.
+    let ask = basic_auth(client.post(owners_url.clone()))
+        .form(&[
+            ("name", "Hansa Baugesellschaft"),
+            ("email", "info@hansa-bau.example"),
+            ("start_date", "2026-08-01"),
+        ])
+        .send()
+        .await
+        .expect("ask about previous building owner");
+    assert_eq!(ask.status(), StatusCode::OK, "asking is not a rejection");
+    let ask_body = ask.text().await.expect("confirmation body");
+    assert!(
+        ask_body.contains("Berlin Wohnen GmbH") && ask_body.contains("2026-07-31"),
+        "confirmation names the previous owner and the day before, got {ask_body:?}"
+    );
+    assert!(
+        ask_body.contains("schlägt das Anlegen des neuen Gebäudeeigentümers fehl"),
+        "confirmation warns that declining fails, got {ask_body:?}"
+    );
+    assert!(
+        ask_body.contains(r#"name="close_previous" value="yes""#)
+            && ask_body.contains(r#"name="close_previous" value="no""#),
+        "confirmation offers yes/no buttons, got {ask_body:?}"
+    );
+
+    // Declining ("no") tells the user the operation would fail.
+    let declined = basic_auth(client.post(owners_url.clone()))
+        .form(&[
+            ("name", "Hansa Baugesellschaft"),
+            ("email", "info@hansa-bau.example"),
+            ("start_date", "2026-08-01"),
+            ("close_previous", "no"),
+        ])
+        .send()
+        .await
+        .expect("decline closing the previous building owner");
+    assert_eq!(declined.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        declined
+            .text()
+            .await
+            .expect("decline body")
+            .contains("kann der neue Gebäudeeigentümer nicht angelegt werden"),
+        "declining is reported as failing"
+    );
+    // Nothing was created.
+    assert_eq!(
+        queries::list_building_owners(&h.pool, &building_id)
+            .await
+            .expect("list building owners")
+            .len(),
+        2,
+        "declining added no building owner"
+    );
+
+    // Confirming ("yes") closes "Berlin Wohnen" on 2026-07-31 and adds the
+    // new owner.
+    let confirmed = basic_auth(client.post(owners_url.clone()))
+        .form(&[
+            ("name", "Hansa Baugesellschaft"),
+            ("email", "info@hansa-bau.example"),
+            ("start_date", "2026-08-01"),
+            ("close_previous", "yes"),
+        ])
+        .send()
+        .await
+        .expect("confirm closing the previous building owner");
+    assert_eq!(confirmed.status(), StatusCode::SEE_OTHER);
+
+    let owners = queries::list_building_owners(&h.pool, &building_id)
+        .await
+        .expect("list building owners");
+    let berlin = owners
+        .iter()
+        .find(|o| o.name == "Berlin Wohnen GmbH")
+        .expect("Berlin Wohnen");
+    assert_eq!(
+        berlin.end_date.as_deref(),
+        Some("2026-07-31"),
+        "previous building owner ends the day before"
+    );
+    assert!(
+        owners.iter().any(|o| o.name == "Hansa Baugesellschaft"),
+        "new building owner added"
+    );
+}
+
 /// One person can own a whole building AND an apartment in another building
 /// (WEG): both roles share a single `people` row, resolved by e-mail. The
 /// building form collects the initial building owner inline (no separate
@@ -1346,8 +1476,13 @@ async fn list_apartment_ids(pool: &kehrkraft::db::Db, building_id: &str) -> Vec<
         .collect()
 }
 
+/// Adding a new tenant while the previous tenancy is still current asks
+/// whether the previous tenancy shall end on the day before the new one
+/// begins. "Yes" closes it and adds the new tenant; "No" is told that the
+/// operation would fail. An adjacent (non-overlapping) start goes through
+/// directly without asking.
 #[tokio::test]
-async fn overlapping_tenancies_are_rejected() {
+async fn adding_tenant_asks_to_close_previous_tenancy() {
     let h = harness::start().await;
     let client = admin_client();
 
@@ -1371,23 +1506,7 @@ async fn overlapping_tenancies_are_rejected() {
         .expect("create tenancy");
     assert_eq!(first.status(), StatusCode::SEE_OTHER);
 
-    // Overlapping tenancy must be rejected.
-    let second = basic_auth(client.post(format!("{apt_url}/tenancies")))
-        .form(&[
-            ("name", "Karl"),
-            ("email", "karl@example.com"),
-            ("start_date", "2026-06-01"),
-        ])
-        .send()
-        .await
-        .expect("create overlapping tenancy");
-    assert_eq!(
-        second.status(),
-        StatusCode::BAD_REQUEST,
-        "overlapping tenancy should be rejected"
-    );
-
-    // Adjacent (non-overlapping) tenancy is accepted.
+    // An adjacent (non-overlapping) tenancy is accepted without asking.
     let adjacent = basic_auth(client.post(format!("{apt_url}/tenancies")))
         .form(&[
             ("name", "Karl"),
@@ -1398,6 +1517,115 @@ async fn overlapping_tenancies_are_rejected() {
         .await
         .expect("create adjacent tenancy");
     assert_eq!(adjacent.status(), StatusCode::SEE_OTHER);
+
+    // The new tenant starts while Karl is still current: the first submission
+    // asks whether Karl's tenancy shall end on the day before.
+    let ask = basic_auth(client.post(format!("{apt_url}/tenancies")))
+        .form(&[
+            ("name", "Petra"),
+            ("email", "petra@example.com"),
+            ("start_date", "2026-08-01"),
+        ])
+        .send()
+        .await
+        .expect("ask about previous tenancy");
+    assert_eq!(ask.status(), StatusCode::OK, "asking is not a rejection");
+    let ask_body = ask.text().await.expect("confirmation body");
+    assert!(
+        ask_body.contains("Karl") && ask_body.contains("2026-07-31"),
+        "confirmation names the previous tenant and the day before, got {ask_body:?}"
+    );
+    assert!(
+        ask_body.contains("schlägt das Anlegen des neuen Mietverhältnisses fehl"),
+        "confirmation warns that declining fails, got {ask_body:?}"
+    );
+    assert!(
+        ask_body.contains(r#"name="close_previous" value="yes""#)
+            && ask_body.contains(r#"name="close_previous" value="no""#),
+        "confirmation offers yes/no buttons, got {ask_body:?}"
+    );
+
+    // Declining ("no") tells the user the operation would fail.
+    let declined = basic_auth(client.post(format!("{apt_url}/tenancies")))
+        .form(&[
+            ("name", "Petra"),
+            ("email", "petra@example.com"),
+            ("start_date", "2026-08-01"),
+            ("close_previous", "no"),
+        ])
+        .send()
+        .await
+        .expect("decline closing the previous tenancy");
+    assert_eq!(declined.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        declined
+            .text()
+            .await
+            .expect("decline body")
+            .contains("kann das neue Mietverhältnis nicht angelegt werden"),
+        "declining is reported as failing"
+    );
+    // Nothing was created.
+    assert_eq!(
+        queries::list_tenancies(&h.pool, &apartment_id)
+            .await
+            .expect("list tenancies")
+            .len(),
+        2,
+        "declining added no tenancy"
+    );
+
+    // Confirming ("yes") closes Karl on 2026-07-31 and adds Petra.
+    let confirmed = basic_auth(client.post(format!("{apt_url}/tenancies")))
+        .form(&[
+            ("name", "Petra"),
+            ("email", "petra@example.com"),
+            ("start_date", "2026-08-01"),
+            ("close_previous", "yes"),
+        ])
+        .send()
+        .await
+        .expect("confirm closing the previous tenancy");
+    assert_eq!(confirmed.status(), StatusCode::SEE_OTHER);
+
+    let tenancies = queries::list_tenancies(&h.pool, &apartment_id)
+        .await
+        .expect("list tenancies");
+    let karl = tenancies
+        .iter()
+        .find(|t| t.name == "Karl")
+        .expect("Karl tenancy");
+    assert_eq!(
+        karl.end_date.as_deref(),
+        Some("2026-07-31"),
+        "previous tenancy ends the day before"
+    );
+    assert!(
+        tenancies.iter().any(|t| t.name == "Petra"),
+        "new tenant added"
+    );
+
+    // Updating a tenancy into an overlapping period is still rejected.
+    let petra_id = tenancies
+        .iter()
+        .find(|t| t.name == "Petra")
+        .expect("Petra tenancy")
+        .id
+        .clone();
+    let update = basic_auth(client.post(format!("{apt_url}/tenancies/{petra_id}")))
+        .form(&[
+            ("name", "Petra"),
+            ("email", "petra@example.com"),
+            ("start_date", "2026-07-15"),
+        ])
+        .send()
+        .await
+        .expect("update tenancy into overlap");
+    assert_eq!(
+        update.status(),
+        StatusCode::BAD_REQUEST,
+        "overlapping tenancy update should be rejected"
+    );
 }
 
 #[tokio::test]
@@ -1545,8 +1773,13 @@ async fn unknown_ical_slug_returns_404() {
     assert_eq!(feed.status(), StatusCode::NOT_FOUND);
 }
 
+/// Adding a new owner while the previous ownership is still current asks
+/// whether the previous ownership shall end on the day before the new one
+/// begins. "Yes" closes it and adds the new owner; "No" is told that the
+/// operation would fail. An adjacent (already tiled) start goes through
+/// directly without asking.
 #[tokio::test]
-async fn overlapping_ownerships_are_rejected() {
+async fn adding_owner_asks_to_close_previous_ownership() {
     let h = harness::start().await;
     let client = admin_client();
 
@@ -1570,23 +1803,7 @@ async fn overlapping_ownerships_are_rejected() {
         .expect("create ownership");
     assert_eq!(first.status(), StatusCode::SEE_OTHER);
 
-    // Overlapping ownership must be rejected on create.
-    let overlap = basic_auth(client.post(format!("{apt_url}/ownerships")))
-        .form(&[
-            ("name", "Karla"),
-            ("email", "karla@example.com"),
-            ("start_date", "2026-06-01"),
-        ])
-        .send()
-        .await
-        .expect("create overlapping ownership");
-    assert_eq!(
-        overlap.status(),
-        StatusCode::BAD_REQUEST,
-        "overlapping ownership should be rejected"
-    );
-
-    // Adjacent (non-overlapping) ownership is accepted.
+    // An adjacent (already tiled) start goes through directly without asking.
     let adjacent = basic_auth(client.post(format!("{apt_url}/ownerships")))
         .form(&[
             ("name", "Karl"),
@@ -1598,21 +1815,99 @@ async fn overlapping_ownerships_are_rejected() {
         .expect("create adjacent ownership");
     assert_eq!(adjacent.status(), StatusCode::SEE_OTHER);
 
-    // Updating an ownership into an overlapping period must be rejected.
+    // The new owner starts while Karl is still current: the first submission
+    // asks whether Karl's ownership shall end on the day before.
+    let ask = basic_auth(client.post(format!("{apt_url}/ownerships")))
+        .form(&[
+            ("name", "Karla"),
+            ("email", "karla@example.com"),
+            ("start_date", "2026-08-01"),
+        ])
+        .send()
+        .await
+        .expect("ask about previous ownership");
+    assert_eq!(ask.status(), StatusCode::OK, "asking is not a rejection");
+    let ask_body = ask.text().await.expect("confirmation body");
+    assert!(
+        ask_body.contains("Karl") && ask_body.contains("2026-07-31"),
+        "confirmation names the previous owner and the day before, got {ask_body:?}"
+    );
+    assert!(
+        ask_body.contains("schlägt das Anlegen des neuen Eigentums fehl"),
+        "confirmation warns that declining fails, got {ask_body:?}"
+    );
+    assert!(
+        ask_body.contains(r#"name="close_previous" value="yes""#)
+            && ask_body.contains(r#"name="close_previous" value="no""#),
+        "confirmation offers yes/no buttons, got {ask_body:?}"
+    );
+
+    // Declining ("no") tells the user the operation would fail.
+    let declined = basic_auth(client.post(format!("{apt_url}/ownerships")))
+        .form(&[
+            ("name", "Karla"),
+            ("email", "karla@example.com"),
+            ("start_date", "2026-08-01"),
+            ("close_previous", "no"),
+        ])
+        .send()
+        .await
+        .expect("decline closing the previous ownership");
+    assert_eq!(declined.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        declined
+            .text()
+            .await
+            .expect("decline body")
+            .contains("kann das neue Eigentum nicht angelegt werden"),
+        "declining is reported as failing"
+    );
+    // Nothing was created.
+    assert_eq!(
+        queries::list_ownerships(&h.pool, &apartment_id)
+            .await
+            .expect("list ownerships")
+            .len(),
+        3,
+        "declining added no ownership (initial + Otto + Karl remain)"
+    );
+
+    // Confirming ("yes") closes Karl on 2026-07-31 and adds Karla.
+    let confirmed = basic_auth(client.post(format!("{apt_url}/ownerships")))
+        .form(&[
+            ("name", "Karla"),
+            ("email", "karla@example.com"),
+            ("start_date", "2026-08-01"),
+            ("close_previous", "yes"),
+        ])
+        .send()
+        .await
+        .expect("confirm closing the previous ownership");
+    assert_eq!(confirmed.status(), StatusCode::SEE_OTHER);
+
     let owners = queries::list_ownerships(&h.pool, &apartment_id)
         .await
         .expect("list ownerships");
-    let adjacent_id = owners
+    let karl = owners.iter().find(|o| o.name == "Karl").expect("Karl");
+    assert_eq!(
+        karl.end_date.as_deref(),
+        Some("2026-07-31"),
+        "previous ownership ends the day before"
+    );
+    assert!(owners.iter().any(|o| o.name == "Karla"), "new owner added");
+
+    // Updating an ownership into an overlapping period is still rejected.
+    let karla_id = owners
         .iter()
-        .find(|o| o.name == "Karl")
-        .expect("adjacent ownership")
+        .find(|o| o.name == "Karla")
+        .expect("Karla ownership")
         .id
         .clone();
-    let update = basic_auth(client.post(format!("{apt_url}/ownerships/{adjacent_id}")))
+    let update = basic_auth(client.post(format!("{apt_url}/ownerships/{karla_id}")))
         .form(&[
-            ("name", "Karl"),
-            ("email", "karl@example.com"),
-            ("start_date", "2026-06-01"),
+            ("name", "Karla"),
+            ("email", "karla@example.com"),
+            ("start_date", "2026-07-15"),
         ])
         .send()
         .await

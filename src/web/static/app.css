@@ -578,6 +578,12 @@ details.disclosure form {
   color: var(--danger);
 }
 
+.alert-info {
+  background: var(--accent-soft);
+  border-color: var(--border-strong);
+  color: var(--accent);
+}
+
 /* ---------- Badges, code, misc ---------- */
 
 .badge {

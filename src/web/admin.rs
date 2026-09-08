@@ -240,6 +240,14 @@ pub struct ApartmentsShowTemplate {
     pub owner_form: Option<OwnershipForm>,
     /// Submitted values, preserved when an "Add Tenant" submission fails.
     pub tenant_form: Option<TenancyForm>,
+    /// Shown above the owner form when the new ownership would start before
+    /// the previous one ends: we ask whether the previous ownership shall end
+    /// the day before the new one begins.
+    pub owner_confirmation: Option<OwnershipConfirmation>,
+    /// Shown above the tenant form when the new tenancy would start before
+    /// the previous one ends: we ask whether the previous tenancy shall end
+    /// the day before the new one begins.
+    pub tenant_confirmation: Option<TenancyConfirmation>,
     /// Known owners, offered as suggestions on the owner name/e-mail fields.
     pub people: Vec<Person>,
     /// Whether the building as a whole currently has a building owner. Then
@@ -791,6 +799,50 @@ async fn load_apartment_owned_by(
     }
 }
 
+/// Everything the apartment show page needs, loaded in one pass.
+struct ApartmentShowParts {
+    building: Building,
+    apartment: Apartment,
+    ownerships: Vec<Ownership>,
+    tenancies: Vec<Tenancy>,
+    people: Vec<Person>,
+    has_building_owner: bool,
+}
+
+async fn load_apartment_show(
+    pool: &Db,
+    building_id: &str,
+    apartment_id: &str,
+) -> Result<ApartmentShowParts, (axum::http::StatusCode, &'static str)> {
+    let building = load_building(pool, building_id).await?;
+    let apartment = load_apartment_owned_by(pool, building_id, apartment_id).await?;
+    let (ownerships, tenancies) = match (
+        queries::list_ownerships(pool, apartment_id).await,
+        queries::list_tenancies(pool, apartment_id).await,
+    ) {
+        (Ok(ownerships), Ok(tenancies)) => (ownerships, tenancies),
+        _ => {
+            return Err((
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Wohnungsdaten konnten nicht geladen werden.",
+            ))
+        }
+    };
+    let people = load_people(pool).await?;
+    let has_building_owner = queries::get_current_building_owner(pool, building_id)
+        .await
+        .map(|owner| owner.is_some())
+        .unwrap_or(false);
+    Ok(ApartmentShowParts {
+        building,
+        apartment,
+        ownerships,
+        tenancies,
+        people,
+        has_building_owner,
+    })
+}
+
 /// Re-render the apartment page with an inline error, preserving the submitted
 /// form values. Used when an "Add Owner"/"Add Tenant" submission fails.
 async fn render_apartment_show_error(
@@ -801,45 +853,53 @@ async fn render_apartment_show_error(
     owner_form: Option<OwnershipForm>,
     tenant_form: Option<TenancyForm>,
 ) -> axum::response::Response {
-    let building = match load_building(pool, building_id).await {
-        Ok(b) => b,
-        Err(err) => return err.into_response(),
-    };
-    let apartment = match load_apartment_owned_by(pool, building_id, apartment_id).await {
-        Ok(a) => a,
-        Err(err) => return err.into_response(),
-    };
-    match (
-        queries::list_ownerships(pool, apartment_id).await,
-        queries::list_tenancies(pool, apartment_id).await,
-    ) {
-        (Ok(ownerships), Ok(tenancies)) => {
-            let people = match load_people(pool).await {
-                Ok(p) => p,
-                Err(err) => return err.into_response(),
-            };
-            let has_building_owner = queries::get_current_building_owner(pool, building_id)
-                .await
-                .map(|owner| owner.is_some())
-                .unwrap_or(false);
-            render_bad_request(ApartmentsShowTemplate {
-                title: apartment.name.clone(),
-                building,
-                apartment,
-                ownerships,
-                tenancies,
-                error: Some(error),
-                owner_form,
-                tenant_form,
-                people,
-                has_building_owner,
-            })
-        }
-        _ => (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Wohnungsdaten konnten nicht geladen werden.",
-        )
-            .into_response(),
+    match load_apartment_show(pool, building_id, apartment_id).await {
+        Ok(parts) => render_bad_request(ApartmentsShowTemplate {
+            title: parts.apartment.name.clone(),
+            building: parts.building,
+            apartment: parts.apartment,
+            ownerships: parts.ownerships,
+            tenancies: parts.tenancies,
+            error: Some(error),
+            owner_form,
+            tenant_form,
+            owner_confirmation: None,
+            tenant_confirmation: None,
+            people: parts.people,
+            has_building_owner: parts.has_building_owner,
+        }),
+        Err((status, msg)) => (status, msg).into_response(),
+    }
+}
+
+/// Re-render the apartment page asking whether the previous ownership/tenancy
+/// shall end on the day before the new one begins. The submitted values stay
+/// in `owner_form`/`tenant_form`; exactly one of the two confirmations is set.
+async fn render_apartment_show_confirmation(
+    pool: &Db,
+    building_id: &str,
+    apartment_id: &str,
+    owner_confirmation: Option<OwnershipConfirmation>,
+    tenant_confirmation: Option<TenancyConfirmation>,
+    owner_form: Option<OwnershipForm>,
+    tenant_form: Option<TenancyForm>,
+) -> axum::response::Response {
+    match load_apartment_show(pool, building_id, apartment_id).await {
+        Ok(parts) => render(ApartmentsShowTemplate {
+            title: parts.apartment.name.clone(),
+            building: parts.building,
+            apartment: parts.apartment,
+            ownerships: parts.ownerships,
+            tenancies: parts.tenancies,
+            error: None,
+            owner_form,
+            tenant_form,
+            owner_confirmation,
+            tenant_confirmation,
+            people: parts.people,
+            has_building_owner: parts.has_building_owner,
+        }),
+        Err((status, msg)) => (status, msg).into_response(),
     }
 }
 
@@ -1022,6 +1082,8 @@ pub async fn apartments_show(
                 error: None,
                 owner_form: None,
                 tenant_form: None,
+                owner_confirmation: None,
+                tenant_confirmation: None,
                 people,
                 has_building_owner,
             })
@@ -1148,16 +1210,78 @@ pub async fn apartments_reorder(
 
 // --- Ownerships ---
 
+/// The question asked when adding an owner would start before the previous
+/// ownership ends: whether the previous ownership shall end on the day before
+/// the new one begins. The submitted values stay in `owner_form`.
+pub struct OwnershipConfirmation {
+    pub previous_name: String,
+    /// The day before the new ownership's start date.
+    pub previous_end: String,
+    /// The new ownership's start date.
+    pub new_start: String,
+}
+
+/// The tenant analogue of [`OwnershipConfirmation`].
+pub struct TenancyConfirmation {
+    pub previous_name: String,
+    /// The day before the new tenancy's start date.
+    pub previous_end: String,
+    /// The new tenancy's start date.
+    pub new_start: String,
+}
+
+/// The day before the given canonical YYYY-MM-DD date, if it parses.
+fn previous_day(date: &str) -> Option<String> {
+    NaiveDate::parse_from_str(date, "%Y-%m-%d").ok().map(|d| {
+        (d - chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string()
+    })
+}
+
 #[derive(serde::Deserialize)]
 pub struct OwnershipForm {
     pub name: String,
     pub email: String,
     pub start_date: String,
     pub end_date: Option<String>,
+    /// "yes"/"no" answer to the question whether the previous ownership
+    /// shall end on the day before the new one begins. Absent on the first
+    /// submission; only present when the confirmation form was shown.
+    #[serde(default)]
+    pub close_previous: Option<String>,
 }
 
 fn normalize_end_date(end_date: Option<&str>) -> Option<&str> {
     end_date.map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// Turn the outcome of creating an ownership into a response: redirect on
+/// success, re-render with the database's rejection message on failure.
+async fn ownership_created(
+    pool: &Db,
+    building_id: &str,
+    apartment_id: &str,
+    form: OwnershipForm,
+    result: Result<Ownership, sqlx::Error>,
+) -> axum::response::Response {
+    match result {
+        Ok(_) => Redirect::to(&format!(
+            "/admin/buildings/{building_id}/apartments/{apartment_id}"
+        ))
+        .into_response(),
+        Err(err) => match db_message(&err) {
+            Some(msg) => {
+                render_apartment_show_error(pool, building_id, apartment_id, msg, Some(form), None)
+                    .await
+            }
+            None => (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Eigentum konnte nicht angelegt werden.",
+            )
+                .into_response(),
+        },
+    }
 }
 
 pub async fn ownerships_create(
@@ -1170,9 +1294,86 @@ pub async fn ownerships_create(
     }
     let end_opt = normalize_end_date(form.end_date.as_deref());
 
-    // Field checks, chain tiling, and tenancy overlaps are enforced by the
-    // database (triggers); its rejection message is shown inline.
-    match queries::create_ownership(
+    // If the new ownership would start while the previous one is still current
+    // (it does not already end on the day before), the database rejects the
+    // insert. Ask the user whether the previous ownership shall end on the day
+    // before the new one begins; the answer comes back as `close_previous`.
+    if let Some(prev) = queries::get_ownership_on(&pool, &apartment_id, &form.start_date)
+        .await
+        .ok()
+        .flatten()
+    {
+        let prev_end = match previous_day(&form.start_date) {
+            Some(d) => d,
+            None => {
+                // Unparseable start date: the database reports it.
+                let result = queries::create_ownership(
+                    &pool,
+                    &apartment_id,
+                    &form.name,
+                    &form.email,
+                    &form.start_date,
+                    end_opt,
+                )
+                .await;
+                return ownership_created(&pool, &building_id, &apartment_id, form, result).await;
+            }
+        };
+        match form.close_previous.as_deref() {
+            None => {
+                return render_apartment_show_confirmation(
+                    &pool,
+                    &building_id,
+                    &apartment_id,
+                    Some(OwnershipConfirmation {
+                        previous_name: prev.name,
+                        previous_end: prev_end,
+                        new_start: form.start_date.clone(),
+                    }),
+                    None,
+                    Some(form),
+                    None,
+                )
+                .await
+            }
+            Some("yes") => {
+                let result = queries::create_ownership_closing_previous(
+                    &pool,
+                    &apartment_id,
+                    queries::PreviousPeriod {
+                        id: &prev.id,
+                        end_date: &prev_end,
+                    },
+                    &form.name,
+                    &form.email,
+                    &form.start_date,
+                    end_opt,
+                )
+                .await;
+                return ownership_created(&pool, &building_id, &apartment_id, form, result).await;
+            }
+            _ => {
+                // The user declined to end the previous ownership the day
+                // before; the operation cannot succeed, so tell them.
+                return render_apartment_show_error(
+                    &pool,
+                    &building_id,
+                    &apartment_id,
+                    format!(
+                        "Ohne das bisherige Eigentum von {} am {} zu beenden, kann das neue Eigentum nicht angelegt werden.",
+                        prev.name, prev_end
+                    ),
+                    Some(form),
+                    None,
+                )
+                .await;
+            }
+        }
+    }
+
+    // No previous ownership covering the new start (the chain is already
+    // tiled): create directly; the database enforces the remaining rules.
+    let result = queries::create_ownership(
         &pool,
         &apartment_id,
         &form.name,
@@ -1180,31 +1381,8 @@ pub async fn ownerships_create(
         &form.start_date,
         end_opt,
     )
-    .await
-    {
-        Ok(_) => Redirect::to(&format!(
-            "/admin/buildings/{building_id}/apartments/{apartment_id}"
-        ))
-        .into_response(),
-        Err(err) => match db_message(&err) {
-            Some(msg) => {
-                render_apartment_show_error(
-                    &pool,
-                    &building_id,
-                    &apartment_id,
-                    msg,
-                    Some(form),
-                    None,
-                )
-                .await
-            }
-            None => (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Eigentum konnte nicht angelegt werden.",
-            )
-                .into_response(),
-        },
-    }
+    .await;
+    ownership_created(&pool, &building_id, &apartment_id, form, result).await
 }
 
 pub async fn ownerships_edit(
@@ -1233,6 +1411,7 @@ pub async fn ownerships_edit(
                 email: ownership.email.clone(),
                 start_date: ownership.start_date.clone(),
                 end_date: ownership.end_date.clone(),
+                close_previous: None,
             };
             render(OwnershipsEditTemplate {
                 title: "Eigentümer bearbeiten".to_string(),
@@ -1380,6 +1559,39 @@ pub struct TenancyForm {
     pub email: String,
     pub start_date: String,
     pub end_date: Option<String>,
+    /// "yes"/"no" answer to the question whether the previous tenancy shall
+    /// end on the day before the new one begins. Absent on the first
+    /// submission; only present when the confirmation form was shown.
+    #[serde(default)]
+    pub close_previous: Option<String>,
+}
+
+/// Turn the outcome of creating a tenancy into a response: redirect on
+/// success, re-render with the database's rejection message on failure.
+async fn tenancy_created(
+    pool: &Db,
+    building_id: &str,
+    apartment_id: &str,
+    form: TenancyForm,
+    result: Result<Tenancy, sqlx::Error>,
+) -> axum::response::Response {
+    match result {
+        Ok(_) => Redirect::to(&format!(
+            "/admin/buildings/{building_id}/apartments/{apartment_id}"
+        ))
+        .into_response(),
+        Err(err) => match db_message(&err) {
+            Some(msg) => {
+                render_apartment_show_error(pool, building_id, apartment_id, msg, None, Some(form))
+                    .await
+            }
+            None => (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Mietverhältnis konnte nicht angelegt werden.",
+            )
+                .into_response(),
+        },
+    }
 }
 
 pub async fn tenancies_create(
@@ -1392,9 +1604,86 @@ pub async fn tenancies_create(
     }
     let end_opt = normalize_end_date(form.end_date.as_deref());
 
-    // Field checks and the "at most one active tenancy" rule are enforced by
-    // the database (triggers); its rejection message is shown inline.
-    match queries::create_tenancy(
+    // If the new tenancy would start while the previous one is still current
+    // (it does not already end on the day before), the database rejects the
+    // insert. Ask the user whether the previous tenancy shall end on the day
+    // before the new one begins; the answer comes back as `close_previous`.
+    if let Some(prev) = queries::get_tenancy_on(&pool, &apartment_id, &form.start_date)
+        .await
+        .ok()
+        .flatten()
+    {
+        let prev_end = match previous_day(&form.start_date) {
+            Some(d) => d,
+            None => {
+                // Unparseable start date: the database reports it.
+                let result = queries::create_tenancy(
+                    &pool,
+                    &apartment_id,
+                    &form.name,
+                    &form.email,
+                    &form.start_date,
+                    end_opt,
+                )
+                .await;
+                return tenancy_created(&pool, &building_id, &apartment_id, form, result).await;
+            }
+        };
+        match form.close_previous.as_deref() {
+            None => {
+                return render_apartment_show_confirmation(
+                    &pool,
+                    &building_id,
+                    &apartment_id,
+                    None,
+                    Some(TenancyConfirmation {
+                        previous_name: prev.name,
+                        previous_end: prev_end,
+                        new_start: form.start_date.clone(),
+                    }),
+                    None,
+                    Some(form),
+                )
+                .await
+            }
+            Some("yes") => {
+                let result = queries::create_tenancy_closing_previous(
+                    &pool,
+                    &apartment_id,
+                    queries::PreviousPeriod {
+                        id: &prev.id,
+                        end_date: &prev_end,
+                    },
+                    &form.name,
+                    &form.email,
+                    &form.start_date,
+                    end_opt,
+                )
+                .await;
+                return tenancy_created(&pool, &building_id, &apartment_id, form, result).await;
+            }
+            _ => {
+                // The user declined to end the previous tenancy the day
+                // before; the operation cannot succeed, so tell them.
+                return render_apartment_show_error(
+                    &pool,
+                    &building_id,
+                    &apartment_id,
+                    format!(
+                        "Ohne das bisherige Mietverhältnis von {} am {} zu beenden, kann das neue Mietverhältnis nicht angelegt werden.",
+                        prev.name, prev_end
+                    ),
+                    None,
+                    Some(form),
+                )
+                .await;
+            }
+        }
+    }
+
+    // No previous tenancy covering the new start: create directly; the
+    // database enforces the remaining rules.
+    let result = queries::create_tenancy(
         &pool,
         &apartment_id,
         &form.name,
@@ -1402,31 +1691,8 @@ pub async fn tenancies_create(
         &form.start_date,
         end_opt,
     )
-    .await
-    {
-        Ok(_) => Redirect::to(&format!(
-            "/admin/buildings/{building_id}/apartments/{apartment_id}"
-        ))
-        .into_response(),
-        Err(err) => match db_message(&err) {
-            Some(msg) => {
-                render_apartment_show_error(
-                    &pool,
-                    &building_id,
-                    &apartment_id,
-                    msg,
-                    None,
-                    Some(form),
-                )
-                .await
-            }
-            None => (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Mietverhältnis konnte nicht angelegt werden.",
-            )
-                .into_response(),
-        },
-    }
+    .await;
+    tenancy_created(&pool, &building_id, &apartment_id, form, result).await
 }
 
 pub async fn tenancies_edit(
@@ -1455,6 +1721,7 @@ pub async fn tenancies_edit(
                 email: tenancy.email.clone(),
                 start_date: tenancy.start_date.clone(),
                 end_date: tenancy.end_date.clone(),
+                close_previous: None,
             };
             render(TenanciesEditTemplate {
                 title: "Mieter bearbeiten".to_string(),
@@ -1895,6 +2162,22 @@ pub struct BuildingOwnerForm {
     pub email: String,
     pub start_date: String,
     pub end_date: Option<String>,
+    /// "yes"/"no" answer to the question whether the previous building owner
+    /// shall end on the day before the new one begins. Absent on the first
+    /// submission; only present when the confirmation form was shown.
+    #[serde(default)]
+    pub close_previous: Option<String>,
+}
+
+/// The question asked when adding a building owner would start before the
+/// previous building-owner period ends: whether that period shall end on the
+/// day before the new one begins. The submitted values stay in `form`.
+pub struct BuildingOwnerConfirmation {
+    pub previous_name: String,
+    /// The day before the new building owner's start date.
+    pub previous_end: String,
+    /// The new building owner's start date.
+    pub new_start: String,
 }
 
 #[derive(Template)]
@@ -1904,6 +2187,10 @@ pub struct BuildingOwnerFormTemplate {
     pub building: Building,
     pub error: Option<String>,
     pub form: BuildingOwnerForm,
+    /// Shown above the form when the new building owner would start before the
+    /// previous one ends: we ask whether the previous period shall end the day
+    /// before the new one begins.
+    pub confirmation: Option<BuildingOwnerConfirmation>,
     /// Form action URL (create or update endpoint).
     pub action: String,
     pub submit_label: String,
@@ -1912,15 +2199,29 @@ pub struct BuildingOwnerFormTemplate {
     pub people: Vec<Person>,
 }
 
+/// One of the possible notices shown above the building-owner form: either a
+/// rejection message from a failed submission or the confirmation question
+/// whether the previous building owner shall end on the day before the new one
+/// begins.
+enum BuildingOwnerFormNotice {
+    Error(String),
+    Confirmation(BuildingOwnerConfirmation),
+}
+
 fn building_owner_form_template(
     title: String,
     building: Building,
-    error: Option<String>,
+    notice: Option<BuildingOwnerFormNotice>,
     form: BuildingOwnerForm,
     building_id: &str,
     owner_id: Option<&str>,
     people: Vec<Person>,
 ) -> BuildingOwnerFormTemplate {
+    let (error, confirmation) = match notice {
+        None => (None, None),
+        Some(BuildingOwnerFormNotice::Error(msg)) => (Some(msg), None),
+        Some(BuildingOwnerFormNotice::Confirmation(confirmation)) => (None, Some(confirmation)),
+    };
     let action = match owner_id {
         Some(owner_id) => format!("/admin/buildings/{building_id}/building_owners/{owner_id}"),
         None => format!("/admin/buildings/{building_id}/building_owners"),
@@ -1936,6 +2237,7 @@ fn building_owner_form_template(
         building,
         error,
         form,
+        confirmation,
         action,
         submit_label,
         people,
@@ -1963,11 +2265,51 @@ pub async fn building_owners_new(
             email: String::new(),
             start_date: String::new(),
             end_date: None,
+            close_previous: None,
         },
         &building_id,
         None,
         people,
     ))
+}
+
+/// Turn the outcome of creating a building owner into a response: redirect on
+/// success, re-render with the database's rejection message on failure.
+async fn building_owner_created(
+    pool: &Db,
+    building_id: &str,
+    form: BuildingOwnerForm,
+    result: Result<BuildingOwner, sqlx::Error>,
+) -> axum::response::Response {
+    match result {
+        Ok(_) => Redirect::to(&format!("/admin/buildings/{building_id}")).into_response(),
+        Err(err) => match db_message(&err) {
+            Some(msg) => {
+                let building = match load_building(pool, building_id).await {
+                    Ok(b) => b,
+                    Err(err) => return err.into_response(),
+                };
+                let people = match load_people(pool).await {
+                    Ok(p) => p,
+                    Err(err) => return err.into_response(),
+                };
+                render_bad_request(building_owner_form_template(
+                    "Gebäudeeigentümer hinzufügen".to_string(),
+                    building,
+                    Some(BuildingOwnerFormNotice::Error(msg)),
+                    form,
+                    building_id,
+                    None,
+                    people,
+                ))
+            }
+            None => (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Gebäudeeigentümer konnte nicht angelegt werden.",
+            )
+                .into_response(),
+        },
+    }
 }
 
 pub async fn building_owners_create(
@@ -1980,21 +2322,34 @@ pub async fn building_owners_create(
     }
     let end_opt = normalize_end_date(form.end_date.as_deref());
 
-    // Field checks and chain tiling are enforced by the database (triggers);
-    // its rejection message is shown inline.
-    match queries::create_building_owner(
-        &pool,
-        &building_id,
-        &form.name,
-        &form.email,
-        &form.start_date,
-        end_opt,
-    )
-    .await
+    // If the new building owner would start while the previous one is still
+    // current (it does not already end on the day before), the database
+    // rejects the insert. Ask the user whether the previous building owner
+    // shall end on the day before the new one begins; the answer comes back as
+    // `close_previous`.
+    if let Some(prev) = queries::get_building_owner_on(&pool, &building_id, &form.start_date)
+        .await
+        .ok()
+        .flatten()
     {
-        Ok(_) => Redirect::to(&format!("/admin/buildings/{building_id}")).into_response(),
-        Err(err) => match db_message(&err) {
-            Some(msg) => {
+        let prev_end = match previous_day(&form.start_date) {
+            Some(d) => d,
+            None => {
+                // Unparseable start date: the database reports it.
+                let result = queries::create_building_owner(
+                    &pool,
+                    &building_id,
+                    &form.name,
+                    &form.email,
+                    &form.start_date,
+                    end_opt,
+                )
+                .await;
+                return building_owner_created(&pool, &building_id, form, result).await;
+            }
+        };
+        match form.close_previous.as_deref() {
+            None => {
                 let building = match load_building(&pool, &building_id).await {
                     Ok(b) => b,
                     Err(err) => return err.into_response(),
@@ -2003,23 +2358,78 @@ pub async fn building_owners_create(
                     Ok(p) => p,
                     Err(err) => return err.into_response(),
                 };
-                render_bad_request(building_owner_form_template(
+                let new_start = form.start_date.clone();
+                return render(building_owner_form_template(
                     "Gebäudeeigentümer hinzufügen".to_string(),
                     building,
-                    Some(msg),
+                    Some(BuildingOwnerFormNotice::Confirmation(
+                        BuildingOwnerConfirmation {
+                            previous_name: prev.name,
+                            previous_end: prev_end,
+                            new_start,
+                        },
+                    )),
                     form,
                     &building_id,
                     None,
                     people,
-                ))
+                ));
             }
-            None => (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Gebäudeeigentümer konnte nicht angelegt werden.",
-            )
-                .into_response(),
-        },
+            Some("yes") => {
+                let result = queries::create_building_owner_closing_previous(
+                    &pool,
+                    &building_id,
+                    queries::PreviousPeriod {
+                        id: &prev.id,
+                        end_date: &prev_end,
+                    },
+                    &form.name,
+                    &form.email,
+                    &form.start_date,
+                    end_opt,
+                )
+                .await;
+                return building_owner_created(&pool, &building_id, form, result).await;
+            }
+            _ => {
+                // The user declined to end the previous building owner the day
+                // before; the operation cannot succeed, so tell them.
+                let building = match load_building(&pool, &building_id).await {
+                    Ok(b) => b,
+                    Err(err) => return err.into_response(),
+                };
+                let people = match load_people(&pool).await {
+                    Ok(p) => p,
+                    Err(err) => return err.into_response(),
+                };
+                return render_bad_request(building_owner_form_template(
+                    "Gebäudeeigentümer hinzufügen".to_string(),
+                    building,
+                    Some(BuildingOwnerFormNotice::Error(format!(
+                        "Ohne das bisherige Gebäudeeigentum von {} am {} zu beenden, kann der neue Gebäudeeigentümer nicht angelegt werden.",
+                        prev.name, prev_end
+                    ))),
+                    form,
+                    &building_id,
+                    None,
+                    people,
+                ));
+            }
+        }
     }
+
+    // No previous building owner covering the new start (the chain is already
+    // tiled): create directly; the database enforces the remaining rules.
+    let result = queries::create_building_owner(
+        &pool,
+        &building_id,
+        &form.name,
+        &form.email,
+        &form.start_date,
+        end_opt,
+    )
+    .await;
+    building_owner_created(&pool, &building_id, form, result).await
 }
 
 pub async fn building_owners_edit(
@@ -2044,6 +2454,7 @@ pub async fn building_owners_edit(
                 email: owner.email.clone(),
                 start_date: owner.start_date.clone(),
                 end_date: owner.end_date.clone(),
+                close_previous: None,
             };
             render(building_owner_form_template(
                 "Gebäudeeigentümer bearbeiten".to_string(),
@@ -2109,7 +2520,7 @@ pub async fn building_owners_update(
                 render_bad_request(building_owner_form_template(
                     "Gebäudeeigentümer bearbeiten".to_string(),
                     building,
-                    Some(msg),
+                    Some(BuildingOwnerFormNotice::Error(msg)),
                     form,
                     &building_id,
                     Some(&owner_id),

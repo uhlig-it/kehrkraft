@@ -14,6 +14,12 @@
 
 <div class="card">
   {% include "admin/_error.html" %}
+  {% if let Some(c) = confirmation %}
+  <div class="alert alert-info" role="alert">
+    <p><strong>{{ c.previous_name }}</strong> ist derzeit als Gebäudeeigentümer über den {{ c.new_start }} hinaus erfasst. Soll das bisherige Gebäudeeigentum am <strong>{{ c.previous_end }}</strong> (dem Tag vor dem neuen Beginn) enden?</p>
+    <p class="muted">Wenn Sie das nicht bestätigen, schlägt das Anlegen des neuen Gebäudeeigentümers fehl.</p>
+  </div>
+  {% endif %}
   <form method="post" action="{{ action }}">
     <p class="muted">Name und E-Mail-Adresse gehören zur Person und gelten damit für alle Zeiträume, in denen sie als Eigentümerin oder Eigentümer geführt wird. Ein neues „Eigentum ab“ muss an den vorherigen Gebäudeeigentümer anschließen.</p>
     <label class="field">
@@ -39,7 +45,12 @@
     </label>
 
     <div class="form-actions">
+      {% if confirmation.is_some() %}
+      <button type="submit" name="close_previous" value="yes" class="btn btn-primary">Ja, bisheriges Gebäudeeigentum beenden und hinzufügen</button>
+      <button type="submit" name="close_previous" value="no" class="btn btn-secondary">Nein, nicht beenden</button>
+      {% else %}
       <button type="submit" class="btn btn-primary">{{ submit_label }}</button>
+      {% endif %}
       <a class="btn btn-secondary" href="{{ cancel_url }}">Abbrechen</a>
     </div>
   </form>
