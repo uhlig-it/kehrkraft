@@ -6,17 +6,18 @@
   "minimumReleaseAge": "3 days",
   "packageRules": [
     {
-      "description": "Auto-merge Cargo patch updates after required CI checks pass.",
-      "matchManagers": ["cargo"],
+      "description": "Auto-merge patch updates to Cargo dependencies and the pinned Rust toolchain (rust-toolchain.toml) after required CI checks pass.",
+      "matchManagers": ["cargo", "rust-toolchain"],
       "matchUpdateTypes": ["patch"],
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": true
     },
     {
-      "description": "GitHub Actions are pinned to commit SHAs; auto-merge digest updates, which stay on the same major/minor tag (the trailing comment shows the tag).",
+      "description": "GitHub Actions are pinned to commit SHAs; auto-merge digest updates, which stay on the same major/minor tag (the trailing comment shows the tag). Digest updates do not reliably carry a release timestamp, so the global minimumReleaseAge would keep them pending forever; skip it (CI validates the change).",
       "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["digest"],
+      "minimumReleaseAge": "0",
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": true
