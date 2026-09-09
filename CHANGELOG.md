@@ -3,6 +3,33 @@
 All notable changes to this project will be documented in this file.
 
 <!-- git-cliff: end of header -->
+## [0.6.0] - 2026-09-09
+
+### Added
+
+- Ask to end the previous ownership or tenancy on the day before when adding a new one
+- Guard the current owner from deletion and warn before ending the chain
+- Internationalize the UI with German/English and a language switcher
+- Use Barlow in the Kehrwoche PDF like the web UI
+
+### Changed
+
+- Fix Renovate auto-merge for toolchain patches and action digest updates
+- *(deps)* Update rust to v1.98.1 (#7)
+- *(deps)* Update rust crate tokio to v1.53.1 (#9)
+- *(deps)* Update softprops/action-gh-release digest to efb3536 (#2)
+- Clean up changelog and drop the unreleased section
+
+### Fixed
+
+- *(deps)* Update rust crate tower-http to 0.7 (#12)
+- *(deps)* Update rust crate base64 to 0.23 (#10)
+- Make the release script resumable and refuse inconsistent release state
+
+### Other
+
+- Remove duplicates from changelog
+
 ## [0.5.1] - 2026-09-07
 
 ### Added
