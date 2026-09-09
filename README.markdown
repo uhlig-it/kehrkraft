@@ -6,7 +6,6 @@ Kehrkraft is a web application for managing who is responsible for Kehrwoche (st
 
 # TODO
 
-* Use the same font in the PDF as in the web pages
 * Switch to proper auth system
 * Support path variables:
   - `TYPST_BIN_PATH` (optional) - Full path to the typst executable that is to be used for generating the PDF invoice. Defaults to the first `typst` in the `$PATH`. If set and non-empty, that value is returned directly. Otherwise, "typst" is searched in the system PATH.

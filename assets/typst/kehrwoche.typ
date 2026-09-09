@@ -10,6 +10,9 @@
 // The wrapper (see pdf.rs) writes logo.svg / qr.svg / qr_ical.svg next to
 // this file and passes the left/right row arrays plus the absolute PDF and
 // iCal links. Column headers and QR captions are localized per request.
+//
+// The document font is Barlow, the same typeface as the web UI: the wrapper
+// selects it (see below) and passes the bundled TTFs via --font-path.
 
 #let schedule_table(rows, col_from, col_to) = table(
   table.header([*W*], [*#col_from*], [*#col_to*], [*Name*]),
@@ -32,6 +35,10 @@
 )
 
 #let kehrwoche(building_name: str, year: int, left_rows: array, right_rows: array, pdf_url: str, ical_url: str, col_from: str, col_to: str, qr_pdf_caption: str, qr_ical_caption: str) = [
+  // Barlow, like the rest of the app. Also set in the wrapper so it reaches
+  // the page footer; repeated here so the template stays correct standalone.
+  #set text(font: "Barlow")
+
   // Logo floats in the top-right corner, right-aligned to the page margin
   // and independent of the document flow (so its size never pushes the
   // schedule down). dy lifts it into the top margin so it stays clear of

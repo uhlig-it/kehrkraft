@@ -20,6 +20,16 @@ use crate::scheduler::{self, WeekAssignment};
 
 const KEHRKRAFT_SVG: &[u8] = include_bytes!("../../kehrkraft.svg");
 
+// Barlow (OFL) TrueType files for the PDF: the browser UI serves subsetted
+// woff2 from /static, but Typst reads TTF/OTF from disk, so the PDF bundles
+// the same typeface and gets it via --font-path. Only the weights the Typst
+// template uses are compiled in (regular text and bold headers); add more
+// files here and to the spool step below when other weights are needed.
+// Source: https://github.com/google/fonts/tree/main/ofl/barlow (OFL 1.1,
+// license copy next to the files under assets/typst/fonts/).
+const BARLOW_REGULAR: &[u8] = include_bytes!("../../assets/typst/fonts/Barlow-Regular.ttf");
+const BARLOW_BOLD: &[u8] = include_bytes!("../../assets/typst/fonts/Barlow-Bold.ttf");
+
 fn escape_typst_str(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -179,13 +189,20 @@ pub async fn public_pdf(
             .into_response();
     }
 
-    // Write Typst template and the logo (lives next to the template so the
-    // compile below can resolve it with a relative path).
+    // Write Typst template, the logo (lives next to the template so the
+    // compile below can resolve it with a relative path), and the bundled
+    // Barlow fonts that kehrwoche.typ selects as the document font.
     let template = include_str!("../../assets/typst/kehrwoche.typ");
     if fs::write(tmp_dir.join("kehrwoche.typ"), template)
         .await
         .is_err()
         || fs::write(tmp_dir.join("logo.svg"), KEHRKRAFT_SVG)
+            .await
+            .is_err()
+        || fs::write(tmp_dir.join("Barlow-Regular.ttf"), BARLOW_REGULAR)
+            .await
+            .is_err()
+        || fs::write(tmp_dir.join("Barlow-Bold.ttf"), BARLOW_BOLD)
             .await
             .is_err()
     {
@@ -236,6 +253,9 @@ pub async fn public_pdf(
     let qr_ical = i18n::msg(ui.lang, "pdf.qr_ical");
     let wrapper_src = format!(
         r#"#import "kehrwoche.typ": kehrwoche
+
+// Same typeface as the web UI (Barlow); the TTFs sit next to the wrapper.
+#set text(font: "Barlow")
 
 #set page(
   paper: "a4",
@@ -302,9 +322,12 @@ pub async fn public_pdf(
             .into_response();
     }
 
-    // Run typst compile with a timeout
+    // Run typst compile with a timeout; --font-path makes the Barlow TTFs
+    // spooled above available to the document (no system font lookup).
     let compile = Command::new("typst")
         .arg("compile")
+        .arg("--font-path")
+        .arg(".")
         .arg("wrapper.typ")
         .arg("out.pdf")
         .current_dir(&tmp_dir)
