@@ -4,56 +4,56 @@
 
 {% block content %}
 <nav class="breadcrumb">
-  <a href="/admin">Gebäude</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><span>Neue Wohnung</span>
+  <a href="/admin">{{ ui.t("nav.buildings") }}</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><span>{{ ui.t("apartments.new") }}</span>
 </nav>
 
 <div class="page-header">
-  <h1>Neue Wohnung: {{ building.name }}</h1>
+  <h1>{{ ui.t1("apartments.new_for", &building.name) }}</h1>
 </div>
 
 <div class="card">
   {% include "admin/_error.html" %}
   <form method="post" action="/admin/buildings/{{ building.id }}/apartments">
     <label class="field">
-      Name <span class="hint">(max. 30 Zeichen)</span>
+      Name <span class="hint">{{ ui.t("form.name_max") }}</span>
       <input type="text" name="name" maxlength="30" value="{{ name }}" required />
     </label>
 
     <label class="field">
-      Beschreibung <span class="hint">(optional)</span>
+      {{ ui.t("form.description") }} <span class="hint">{{ ui.t("form.optional") }}</span>
       <input type="text" name="description" value="{{ description }}" />
     </label>
 
-    <h2 class="section-title">Erster Eigentümer</h2>
+    <h2 class="section-title">{{ ui.t("apartments.first_owner") }}</h2>
     {% if has_building_owner %}
-    <p class="muted">Das Gebäude gehört als Ganzes dem Gebäudeeigentümer – die Wohnung hat daher keinen eigenen Eigentümer. Einzelne Wohnungseigentümer gibt es erst, wenn das Gebäude in Wohnungseigentum aufgeteilt wird (WEG); das unterstützt Kehrkraft nicht.</p>
+    <p class="muted">{{ ui.t("apartments.building_owned_help") }}</p>
     {% else %}
-    <p class="muted">Eine Wohnung braucht immer mindestens einen Eigentümer; der erste wird zusammen mit der Wohnung angelegt.</p>
+    <p class="muted">{{ ui.t("apartments.owner_required_help") }}</p>
     <label class="field">
       Name
       <input type="text" name="owner_name" id="apartment-owner-name" list="people-names"
              data-email-field="apartment-owner-email" value="{{ owner_name }}" required />
     </label>
     <label class="field">
-      E-Mail
+      {{ ui.t("form.email") }}
       <input type="email" name="owner_email" id="apartment-owner-email" list="people-emails"
              value="{{ owner_email }}" required />
     </label>
     <label class="field">
-      Eigentum ab
+      {{ ui.t("form.ownership_from") }}
       <input type="date" name="owner_start_date" value="{{ owner_start_date }}" required />
     </label>
     <label class="field">
-      Eigentum bis <span class="hint">(optional)</span>
+      {{ ui.t("apartments.ownership_until") }} <span class="hint">{{ ui.t("form.optional") }}</span>
       <input type="date" name="owner_end_date" value="{% if let Some(ed) = owner_end_date %}{{ ed }}{% endif %}" />
     </label>
-    <p class="muted">Bekannte Eigentümer erscheinen bei der Eingabe als Vorschlag; dieselbe E-Mail-Adresse bedeutet dieselbe Person.</p>
+    <p class="muted">{{ ui.t("suggestions.help") }}</p>
     {% include "admin/_people_datalists.html" %}
     {% endif %}
 
     <div class="form-actions">
-      <button type="submit" class="btn btn-primary">Wohnung anlegen</button>
-      <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}">Abbrechen</a>
+      <button type="submit" class="btn btn-primary">{{ ui.t("apartments.create") }}</button>
+      <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}">{{ ui.t("common.cancel") }}</a>
     </div>
   </form>
 </div>

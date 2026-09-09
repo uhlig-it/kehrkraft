@@ -4,23 +4,23 @@
 
 {% block content %}
 <nav class="breadcrumb">
-  <a href="/admin">Gebäude</a><span class="sep">/</span><span>Personen</span>
+  <a href="/admin">{{ ui.t("nav.buildings") }}</a><span class="sep">/</span><span>{{ ui.t("nav.people") }}</span>
 </nav>
 
 <div class="page-header">
-  <h1>Personen</h1>
-  <p class="subtitle">Jede Person wird nur einmal geführt – als Eigentümerin oder Eigentümer, Gebäudeeigentümer, Mieterin oder Mieter und Ansprechpartnerin oder Ansprechpartner. Dieselbe E-Mail-Adresse bedeutet dieselbe Person.</p>
+  <h1>{{ ui.t("nav.people") }}</h1>
+  <p class="subtitle">{{ ui.t("people.subtitle") }}</p>
 </div>
 
 <section class="card">
   {% if entries.len() == 0 %}
-  <p class="muted">Noch keine Personen erfasst. Personen entstehen zusammen mit Eigentum, Mietverhältnissen oder Ansprechpartnern.</p>
+  <p class="muted">{{ ui.t("people.empty") }}</p>
   {% else %}
   <table class="table">
     <thead>
       <tr>
         <th>Name</th>
-        <th class="email-if-space">E-Mail</th>
+        <th class="email-if-space">{{ ui.t("table.email") }}</th>
       </tr>
     </thead>
     <tbody>
@@ -32,7 +32,7 @@
           <span class="muted person-roles-summary">{{ e.roles_summary }}</span>
           {% endif %}
         </td>
-        <td class="email-if-space" data-label="E-Mail"><a href="mailto:{{ e.person.email }}">{{ e.person.email }}</a></td>
+        <td class="email-if-space" data-label="{{ ui.t("table.email") }}"><a href="mailto:{{ e.person.email }}">{{ e.person.email }}</a></td>
       </tr>
     {% endfor %}
     </tbody>

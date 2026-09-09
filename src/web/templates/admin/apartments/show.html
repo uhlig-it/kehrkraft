@@ -4,7 +4,7 @@
 
 {% block content %}
 <nav class="breadcrumb">
-  <a href="/admin">Gebäude</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><span>{{ apartment.name }}</span>
+  <a href="/admin">{{ ui.t("nav.buildings") }}</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><span>{{ apartment.name }}</span>
 </nav>
 
 {% include "admin/_error.html" %}
@@ -16,21 +16,21 @@
     <p class="subtitle">{{ apartment.description }}</p>
     {% endif %}
   </div>
-  <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/edit">Wohnung bearbeiten</a>
+  <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/edit">{{ ui.t("apartments.edit_title") }}</a>
 </div>
 
 <section class="card">
-  <h2>Eigentümer</h2>
+  <h2>{{ ui.t("apartments.owners_heading") }}</h2>
   {% if ownerships.len() == 0 %}
-  <p class="muted">Keine Eigentümer erfasst.</p>
+  <p class="muted">{{ ui.t("apartments.no_owners") }}</p>
   {% else %}
   <table class="table">
     <thead>
       <tr>
         <th>Name</th>
-        <th>E-Mail</th>
-        <th>Beginn</th>
-        <th>Ende</th>
+        <th>{{ ui.t("table.email") }}</th>
+        <th>{{ ui.t("table.start") }}</th>
+        <th>{{ ui.t("table.end") }}</th>
         <th class="col-actions"></th>
       </tr>
     </thead>
@@ -38,15 +38,15 @@
     {% for o in ownerships %}
       <tr>
         <td data-label="Name"><a href="/admin/people/{{ o.person_id }}">{{ o.name }}</a></td>
-        <td data-label="E-Mail">{{ o.email }}</td>
-        <td data-label="Beginn">{{ o.start_date }}</td>
-        <td data-label="Ende">{% if o.end_date.is_some() %}{{ o.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
+        <td data-label="{{ ui.t("table.email") }}">{{ o.email }}</td>
+        <td data-label="{{ ui.t("table.start") }}">{{ o.start_date }}</td>
+        <td data-label="{{ ui.t("table.end") }}">{% if o.end_date.is_some() %}{{ o.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
         <td class="col-actions">
-          <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ o.id }}/edit">Bearbeiten</a>
+          <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ o.id }}/edit">{{ ui.t("common.edit") }}</a>
           <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ o.id }}/delete"
                 hx-post="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ o.id }}/delete"
-                hx-confirm="Dieses Eigentum löschen?">
-            <button type="submit" class="btn btn-danger btn-sm">Löschen</button>
+                hx-confirm="{{ ui.t("apartments.owner_delete_confirm") }}">
+            <button type="submit" class="btn btn-danger btn-sm">{{ ui.t("common.delete") }}</button>
           </form>
         </td>
       </tr>
@@ -56,17 +56,17 @@
   {% endif %}
 
   {% if has_building_owner %}
-  <p class="muted"><em>Das Gebäude gehört als Ganzes dem Gebäudeeigentümer. Eigentümer einzelner Wohnungen gibt es rechtlich nicht, solange das Gebäude nicht in Wohnungseigentum aufgeteilt ist (WEG). Eine solche Aufteilung unterstützt Kehrkraft nicht.</em></p>
+  <p class="muted"><em>{{ ui.t("apartments.weg_notice") }}</em></p>
   {% else %}
   <details class="disclosure" {% if owner_form.is_some() || owner_confirmation.is_some() %}open{% endif %}>
-    <summary>Eigentümer hinzufügen</summary>
+    <summary>{{ ui.t("owners.add") }}</summary>
     {% if let Some(c) = owner_confirmation %}
     <div class="alert alert-info" role="alert">
-      <p><strong>{{ c.previous_name }}</strong> ist derzeit als Eigentümerin bzw. Eigentümer über den {{ c.new_start }} hinaus erfasst. Soll das bisherige Eigentum am <strong>{{ c.previous_end }}</strong> (dem Tag vor dem neuen Beginn) enden?</p>
-      <p class="muted">Wenn Sie das nicht bestätigen, schlägt das Anlegen des neuen Eigentums fehl.</p>
+      <p>{{ ui.t3("apartments.owner_confirm_question", &c.previous_name, &c.new_start, &c.previous_end) }}</p>
+      <p class="muted">{{ ui.t("apartments.owner_confirm_help") }}</p>
     </div>
     {% endif %}
-    <p class="muted">Bekannte Eigentümer erscheinen bei der Eingabe als Vorschlag; dieselbe E-Mail-Adresse bedeutet dieselbe Person.</p>
+    <p class="muted">{{ ui.t("suggestions.help") }}</p>
     <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships">
       <label class="field">
         Name
@@ -74,24 +74,24 @@
                data-email-field="owner-add-email" value="{% if let Some(f) = owner_form %}{{ f.name }}{% endif %}" required />
       </label>
       <label class="field">
-        E-Mail
+        {{ ui.t("form.email") }}
         <input type="email" name="email" id="owner-add-email" list="people-emails"
                value="{% if let Some(f) = owner_form %}{{ f.email }}{% endif %}" required />
       </label>
       <label class="field">
-        Eigentum ab
+        {{ ui.t("form.ownership_from") }}
         <input type="date" name="start_date" value="{% if let Some(f) = owner_form %}{{ f.start_date }}{% endif %}" required />
       </label>
       <label class="field">
-        Eigentum bis <span class="hint">(optional)</span>
+        {{ ui.t("apartments.ownership_until") }} <span class="hint">{{ ui.t("form.optional") }}</span>
         <input type="date" name="end_date" value="{% if let Some(f) = owner_form %}{% if let Some(ed) = f.end_date %}{{ ed }}{% endif %}{% endif %}" />
       </label>
       <div class="form-actions">
         {% if owner_confirmation.is_some() %}
-        <button type="submit" name="close_previous" value="yes" class="btn btn-primary">Ja, bisheriges Eigentum beenden und hinzufügen</button>
-        <button type="submit" name="close_previous" value="no" class="btn btn-secondary">Nein, nicht beenden</button>
+        <button type="submit" name="close_previous" value="yes" class="btn btn-primary">{{ ui.t("apartments.close_previous_owner") }}</button>
+        <button type="submit" name="close_previous" value="no" class="btn btn-secondary">{{ ui.t("common.no_dont_end") }}</button>
         {% else %}
-        <button type="submit" class="btn btn-primary">Eigentümer hinzufügen</button>
+        <button type="submit" class="btn btn-primary">{{ ui.t("owners.add") }}</button>
         {% endif %}
       </div>
     </form>
@@ -104,18 +104,18 @@
 </section>
 
 <section class="card">
-  <h2>Mieter</h2>
-  <p class="muted"><em>Besteht während einer Woche ein Mietverhältnis, wird die Kehrwoche an den Mieter delegiert. Überlappende Mietverhältnisse lehnt die Anwendung ab.</em></p>
+  <h2>{{ ui.t("apartments.tenants_heading") }}</h2>
+  <p class="muted"><em>{{ ui.t("apartments.tenant_delegation_help") }}</em></p>
   {% if tenancies.len() == 0 %}
-  <p class="muted">Keine Mietverhältnisse erfasst.</p>
+  <p class="muted">{{ ui.t("apartments.no_tenancies") }}</p>
   {% else %}
   <table class="table">
     <thead>
       <tr>
         <th>Name</th>
-        <th>E-Mail</th>
-        <th>Beginn</th>
-        <th>Ende</th>
+        <th>{{ ui.t("table.email") }}</th>
+        <th>{{ ui.t("table.start") }}</th>
+        <th>{{ ui.t("table.end") }}</th>
         <th class="col-actions"></th>
       </tr>
     </thead>
@@ -123,15 +123,15 @@
     {% for t in tenancies %}
       <tr>
         <td data-label="Name"><a href="/admin/people/{{ t.person_id }}">{{ t.name }}</a></td>
-        <td data-label="E-Mail">{{ t.email }}</td>
-        <td data-label="Beginn">{{ t.start_date }}</td>
-        <td data-label="Ende">{% if t.end_date.is_some() %}{{ t.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
+        <td data-label="{{ ui.t("table.email") }}">{{ t.email }}</td>
+        <td data-label="{{ ui.t("table.start") }}">{{ t.start_date }}</td>
+        <td data-label="{{ ui.t("table.end") }}">{% if t.end_date.is_some() %}{{ t.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
         <td class="col-actions">
-          <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ t.id }}/edit">Bearbeiten</a>
+          <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ t.id }}/edit">{{ ui.t("common.edit") }}</a>
           <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ t.id }}/delete"
                 hx-post="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ t.id }}/delete"
-                hx-confirm="Dieses Mietverhältnis löschen?">
-            <button type="submit" class="btn btn-danger btn-sm">Löschen</button>
+                hx-confirm="{{ ui.t("apartments.tenant_delete_confirm") }}">
+            <button type="submit" class="btn btn-danger btn-sm">{{ ui.t("common.delete") }}</button>
           </form>
         </td>
       </tr>
@@ -141,14 +141,14 @@
   {% endif %}
 
   <details class="disclosure" {% if tenant_form.is_some() || tenant_confirmation.is_some() %}open{% endif %}>
-    <summary>Mieter hinzufügen</summary>
+    <summary>{{ ui.t("apartments.add_tenant") }}</summary>
     {% if let Some(c) = tenant_confirmation %}
     <div class="alert alert-info" role="alert">
-      <p>Das bisherige Mietverhältnis von <strong>{{ c.previous_name }}</strong> besteht derzeit über den {{ c.new_start }} hinaus. Soll es am <strong>{{ c.previous_end }}</strong> (dem Tag vor dem neuen Mietbeginn) enden?</p>
-      <p class="muted">Wenn Sie das nicht bestätigen, schlägt das Anlegen des neuen Mietverhältnisses fehl.</p>
+      <p>{{ ui.t3("apartments.tenant_confirm_question", &c.previous_name, &c.new_start, &c.previous_end) }}</p>
+      <p class="muted">{{ ui.t("apartments.tenant_confirm_help") }}</p>
     </div>
     {% endif %}
-    <p class="muted">Bekannte Eigentümer erscheinen bei der Eingabe als Vorschlag; dieselbe E-Mail-Adresse bedeutet dieselbe Person.</p>
+    <p class="muted">{{ ui.t("suggestions.help") }}</p>
     <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies">
       <label class="field">
         Name
@@ -156,24 +156,24 @@
                data-email-field="tenant-add-email" value="{% if let Some(f) = tenant_form %}{{ f.name }}{% endif %}" required />
       </label>
       <label class="field">
-        E-Mail
+        {{ ui.t("form.email") }}
         <input type="email" name="email" id="tenant-add-email" list="people-emails"
                value="{% if let Some(f) = tenant_form %}{{ f.email }}{% endif %}" required />
       </label>
       <label class="field">
-        Mietbeginn
+        {{ ui.t("tenancy.start") }}
         <input type="date" name="start_date" value="{% if let Some(f) = tenant_form %}{{ f.start_date }}{% endif %}" required />
       </label>
       <label class="field">
-        Mietende <span class="hint">(optional)</span>
+        {{ ui.t("tenancy.end") }} <span class="hint">{{ ui.t("form.optional") }}</span>
         <input type="date" name="end_date" value="{% if let Some(f) = tenant_form %}{% if let Some(ed) = f.end_date %}{{ ed }}{% endif %}{% endif %}" />
       </label>
       <div class="form-actions">
         {% if tenant_confirmation.is_some() %}
-        <button type="submit" name="close_previous" value="yes" class="btn btn-primary">Ja, bisheriges Mietverhältnis beenden und hinzufügen</button>
-        <button type="submit" name="close_previous" value="no" class="btn btn-secondary">Nein, nicht beenden</button>
+        <button type="submit" name="close_previous" value="yes" class="btn btn-primary">{{ ui.t("apartments.close_previous_tenant") }}</button>
+        <button type="submit" name="close_previous" value="no" class="btn btn-secondary">{{ ui.t("common.no_dont_end") }}</button>
         {% else %}
-        <button type="submit" class="btn btn-primary">Mieter hinzufügen</button>
+        <button type="submit" class="btn btn-primary">{{ ui.t("apartments.add_tenant") }}</button>
         {% endif %}
       </div>
     </form>

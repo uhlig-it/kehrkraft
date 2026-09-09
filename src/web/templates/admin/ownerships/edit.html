@@ -4,24 +4,24 @@
 
 {% block content %}
 <nav class="breadcrumb">
-  <a href="/admin">Gebäude</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">{{ apartment.name }}</a><span class="sep">/</span><span>Eigentümer: {{ ownership.name }}</span>
+  <a href="/admin">{{ ui.t("nav.buildings") }}</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">{{ apartment.name }}</a><span class="sep">/</span><span>{{ ui.t1("ownership.breadcrumb", &ownership.name) }}</span>
 </nav>
 
 <div class="page-header">
-  <h1>Eigentümer bearbeiten: {{ ownership.name }}</h1>
-  <p class="subtitle">Wohnung {{ apartment.name }} ({{ building.name }})</p>
+  <h1>{{ ui.t1("ownership.edit_title_with", &ownership.name) }}</h1>
+  <p class="subtitle">{{ ui.t2("ownership.edit_subtitle", &apartment.name, &building.name) }}</p>
 </div>
 
 <div class="card">
   {% include "admin/_error.html" %}
   {% if let Some(w) = end_warning %}
   <div class="alert alert-warning" role="alert">
-    <p>Das Enddatum <strong>{{ w.end_date }}</strong> liegt vor dem heutigen Tag. Ab dem <strong>{{ w.uncovered_from }}</strong> hätte die Wohnung bis zur Erfassung eines neuen Eigentümers keinen Eigentümer mehr.</p>
-    <p class="muted">Wenn Sie das nicht beabsichtigen, wählen Sie „Nein, nicht beenden" oder ändern Sie das Enddatum.</p>
+    <p>{{ ui.t2("ownership.end_warning", &w.end_date, &w.uncovered_from) }}</p>
+    <p class="muted">{{ ui.t("ownership.end_warning_help") }}</p>
   </div>
   {% endif %}
   <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships/{{ ownership.id }}">
-    <p class="muted">Name und E-Mail-Adresse gehören zur Person und gelten damit für alle Zeiträume, in denen sie als Eigentümerin oder Eigentümer geführt wird. Ein neues „Eigentum ab“ muss lückenlos an die übrigen Zeiträume der Wohnung anschließen.</p>
+    <p class="muted">{{ ui.t("ownership.person_help") }}</p>
     <label class="field">
       Name
       <input type="text" name="name" id="ownership-edit-name" list="people-names"
@@ -29,29 +29,29 @@
     </label>
 
     <label class="field">
-      E-Mail
+      {{ ui.t("form.email") }}
       <input type="email" name="email" id="ownership-edit-email" list="people-emails"
              value="{{ form.email }}" required />
     </label>
 
     <label class="field">
-      Eigentum ab
+      {{ ui.t("form.ownership_from") }}
       <input type="date" name="start_date" value="{{ form.start_date }}" required />
     </label>
 
     <label class="field">
-      Eigentum bis <span class="hint">(optional)</span>
+      {{ ui.t("apartments.ownership_until") }} <span class="hint">{{ ui.t("form.optional") }}</span>
       <input type="date" name="end_date" value="{% if let Some(ed) = form.end_date %}{{ ed }}{% endif %}" />
     </label>
 
     <div class="form-actions">
       {% if end_warning.is_some() %}
-      <button type="submit" name="confirm_end" value="yes" class="btn btn-primary">Ja, dennoch beenden</button>
-      <button type="submit" name="confirm_end" value="no" class="btn btn-secondary">Nein, nicht beenden</button>
+      <button type="submit" name="confirm_end" value="yes" class="btn btn-primary">{{ ui.t("common.yes_end_anyway") }}</button>
+      <button type="submit" name="confirm_end" value="no" class="btn btn-secondary">{{ ui.t("common.no_dont_end") }}</button>
       {% else %}
-      <button type="submit" class="btn btn-primary">Änderungen speichern</button>
+      <button type="submit" class="btn btn-primary">{{ ui.t("common.save_changes") }}</button>
       {% endif %}
-      <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">Abbrechen</a>
+      <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">{{ ui.t("common.cancel") }}</a>
     </div>
   </form>
 

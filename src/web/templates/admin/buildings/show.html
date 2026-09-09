@@ -4,7 +4,7 @@
 
 {% block content %}
 <nav class="breadcrumb">
-  <a href="/admin">Gebäude</a><span class="sep">/</span><span>{{ building.name }}</span>
+  <a href="/admin">{{ ui.t("nav.buildings") }}</a><span class="sep">/</span><span>{{ building.name }}</span>
 </nav>
 
 {% include "admin/_error.html" %}
@@ -17,31 +17,31 @@
     {% endif %}
     {% if admins.len() > 0 %}
     <p class="meta-line">
-      Ansprechpartner:{% for a in admins %}{% if !loop.first %},{% endif %} <a href="/admin/people/{{ a.person_id }}">{{ a.name }}</a> (<a href="mailto:{{ a.email }}">{{ a.email }}</a>){% endfor %}
+      {{ ui.t("buildings.contact_label_line") }}{% for a in admins %}{% if !loop.first %},{% endif %} <a href="/admin/people/{{ a.person_id }}">{{ a.name }}</a> (<a href="mailto:{{ a.email }}">{{ a.email }}</a>){% endfor %}
     </p>
     {% endif %}
   </div>
   <div class="page-header-actions">
-    <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}/edit">Gebäude bearbeiten</a>
-    <a class="btn btn-secondary" href="/p/{{ building.secret_slug }}/kehrwoche.pdf" target="_blank" rel="noopener">Plan als öffentliches PDF</a>
-    <a class="btn btn-secondary" href="/p/{{ building.secret_slug }}/kehrwoche.ics">öffentlicher iCal-Feed</a>
+    <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}/edit">{{ ui.t("buildings.edit_title") }}</a>
+    <a class="btn btn-secondary" href="/p/{{ building.secret_slug }}/kehrwoche.pdf" target="_blank" rel="noopener">{{ ui.t("buildings.public_pdf") }}</a>
+    <a class="btn btn-secondary" href="/p/{{ building.secret_slug }}/kehrwoche.ics">{{ ui.t("buildings.public_ical") }}</a>
   </div>
 </div>
 
 <section class="card">
   <div class="card-header">
-    <h2>Kehrwochen-Plan</h2>
-    <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/schedule">Kompletter Jahresplan</a>
+    <h2>{{ ui.t("buildings.schedule_heading") }}</h2>
+    <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/schedule">{{ ui.t("buildings.full_year") }}</a>
   </div>
   {% if schedule.len() == 0 %}
-  <p class="muted">Für dieses Jahr sind keine kommenden Wochen mehr eingeplant.</p>
+  <p class="muted">{{ ui.t("buildings.no_upcoming") }}</p>
   {% else %}
   <table class="table table-compact">
     <thead>
       <tr>
-        <th>KW</th>
-        <th>von</th>
-        <th>bis</th>
+        <th>{{ ui.t("schedule.week") }}</th>
+        <th>{{ ui.t("schedule.from") }}</th>
+        <th>{{ ui.t("schedule.to") }}</th>
         <th>Name</th>
       </tr>
     </thead>
@@ -54,8 +54,8 @@
         <td>
           {% match w.assignee_name %}
             {% when Some with (n) %}
-              {{ n }}{% if w.delegated %} <span class="badge">Mieter</span>{% endif %}
-            {% when None %}<span class="badge badge-muted">Nicht zugewiesen</span>
+              {{ n }}{% if w.delegated %} <span class="badge">{{ ui.t("schedule.tenant") }}</span>{% endif %}
+            {% when None %}<span class="badge badge-muted">{{ ui.t("schedule.unassigned") }}</span>
           {% endmatch %}
         </td>
       </tr>
@@ -67,50 +67,50 @@
 
 <section class="card">
   <div class="card-header">
-    <h2>Wohnungen</h2>
+    <h2>{{ ui.t("buildings.apartments_heading") }}</h2>
     <div class="card-header-actions">
-      <span id="apartment-sort-indicator" class="htmx-indicator reorder-indicator">Speichere Reihenfolge …</span>
-      <a class="btn btn-primary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/new">Neue Wohnung</a>
+      <span id="apartment-sort-indicator" class="htmx-indicator reorder-indicator">{{ ui.t("buildings.saving_order") }}</span>
+      <a class="btn btn-primary btn-sm" href="/admin/buildings/{{ building.id }}/apartments/new">{{ ui.t("apartments.new") }}</a>
     </div>
   </div>
   {% if apartments.len() == 0 %}
-  <p class="muted">Noch keine Wohnungen.</p>
+  <p class="muted">{{ ui.t("buildings.no_apartments") }}</p>
   {% else %}
   <table class="table sortable">
     <thead>
       <tr>
         <th class="col-drag"></th>
         <th>Name</th>
-        <th>Beschreibung</th>
+        <th>{{ ui.t("form.description") }}</th>
         <th class="col-actions"></th>
       </tr>
     </thead>
     {% include "admin/apartments/_table_body.html" %}
   </table>
-  <p class="muted">Die Reihenfolge in dieser Liste dient nur der Anzeige; die Kehrwoche-Rotation folgt der Anlage-Reihenfolge der Wohnungen (Badge „Rotation“).</p>
+  <p class="muted">{{ ui.t("buildings.sort_hint") }}</p>
   {% endif %}
 </section>
 
 <section class="card">
   <div class="card-header">
-    <h2>Gebäudeeigentümer</h2>
+    <h2>{{ ui.t("buildings.building_owners_heading") }}</h2>
     {% if has_apartment_owners %}
-    <span class="muted">Nicht möglich, solange Wohnungen eigene Eigentümer haben (WEG).</span>
+    <span class="muted">{{ ui.t("buildings.owners_blocked") }}</span>
     {% else %}
-    <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/building_owners/new">Eigentümer hinzufügen</a>
+    <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/building_owners/new">{{ ui.t("owners.add") }}</a>
     {% endif %}
   </div>
   {% if building_owners.len() == 0 %}
-  <p class="muted">Kein Eigentümer für das gesamte Gebäude erfasst – dann braucht jede Wohnung einen eigenen Eigentümer.</p>
+  <p class="muted">{{ ui.t("buildings.no_building_owner") }}</p>
   {% else %}
-  <p class="muted">Der Gebäudeeigentümer besitzt alle Wohnungen; einzelne Wohnungseigentümer sind dann nicht erforderlich. Vermietete Wohnungen delegieren die Kehrwoche weiterhin an den Mieter.</p>
+  <p class="muted">{{ ui.t("buildings.building_owner_help") }}</p>
   <table class="table">
     <thead>
       <tr>
         <th>Name</th>
-        <th>E-Mail</th>
-        <th>Beginn</th>
-        <th>Ende</th>
+        <th>{{ ui.t("table.email") }}</th>
+        <th>{{ ui.t("table.start") }}</th>
+        <th>{{ ui.t("table.end") }}</th>
         <th class="col-actions"></th>
       </tr>
     </thead>
@@ -118,57 +118,57 @@
     {% for o in building_owners %}
       <tr>
         <td data-label="Name"><a href="/admin/people/{{ o.person_id }}">{{ o.name }}</a></td>
-        <td data-label="E-Mail">{{ o.email }}</td>
-        <td data-label="Beginn">{{ o.start_date }}</td>
-        <td data-label="Ende">{% if o.end_date.is_some() %}{{ o.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
+        <td data-label="{{ ui.t("table.email") }}">{{ o.email }}</td>
+        <td data-label="{{ ui.t("table.start") }}">{{ o.start_date }}</td>
+        <td data-label="{{ ui.t("table.end") }}">{% if o.end_date.is_some() %}{{ o.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
         <td class="col-actions">
-          <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/building_owners/{{ o.id }}/edit">Bearbeiten</a>
+          <a class="btn btn-secondary btn-sm" href="/admin/buildings/{{ building.id }}/building_owners/{{ o.id }}/edit">{{ ui.t("common.edit") }}</a>
           <form class="inline" method="post" action="/admin/buildings/{{ building.id }}/building_owners/{{ o.id }}/delete"
                 hx-post="/admin/buildings/{{ building.id }}/building_owners/{{ o.id }}/delete"
-                hx-confirm="Diesen Gebäudeeigentümer löschen?">
-            <button type="submit" class="btn btn-danger btn-sm">Löschen</button>
+                hx-confirm="{{ ui.t("building_owner.delete_confirm") }}">
+            <button type="submit" class="btn btn-danger btn-sm">{{ ui.t("common.delete") }}</button>
           </form>
         </td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
-  <p class="muted">Die Zeiträume reihen sich lückenlos aneinander: Ein neuer Eigentümer beginnt am Tag nach dem Ende des vorherigen.</p>
+  <p class="muted">{{ ui.t("buildings.owner_chain_help") }}</p>
   {% endif %}
 </section>
 
 <section class="card danger-zone">
   <div class="card-header">
-    <h2>Gefahrenzone</h2>
+    <h2>{{ ui.t("danger_zone.heading") }}</h2>
   </div>
 
   <form class="rotation-seed-form"
         method="post"
         action="/admin/buildings/{{ building.id }}/rotation_seed"
         hx-post="/admin/buildings/{{ building.id }}/rotation_seed"
-        hx-confirm="Rotations-Versatz dieses Gebäudes ändern? Die Kehrwoche-Zuordnung aller Wochen verschiebt sich sofort – auch für bereits vergangene Wochen.">
+        hx-confirm="{{ ui.t("buildings.rotation_confirm") }}">
     <div class="rotation-seed-left">
       <div class="rotation-seed-controls">
-        <label for="rotation-seed">Rotations-Versatz</label>
+        <label for="rotation-seed">{{ ui.t("buildings.rotation_label") }}</label>
         <select id="rotation-seed" name="rotation_seed" hx-trigger="change">
           {% for (value, selected) in rotation_options %}
           <option value="{{ value }}"{% if selected %} selected{% endif %}>{{ value }}</option>
           {% endfor %}
         </select>
       </div>
-      <p class="rotation-seed-hint">Verschiebt den Beginn der Rotation: Nach jedem Schritt übernimmt die nächste Wohnung die erste Woche (0 = Standard). Gilt sofort für alle Wochen des Plans.</p>
+      <p class="rotation-seed-hint">{{ ui.t("buildings.rotation_help") }}</p>
     </div>
-    <button type="submit" class="btn btn-danger">Anwenden</button>
+    <button type="submit" class="btn btn-danger">{{ ui.t("common.apply") }}</button>
   </form>
 
   <div class="hazard-band" aria-hidden="true"></div>
 
   <div class="danger-delete">
-    <p class="muted">Löscht das Gebäude samt aller Wohnungen, Eigentümer und Mietverhältnisse.</p>
+    <p class="muted">{{ ui.t("buildings.delete_help") }}</p>
     <form method="post" action="/admin/buildings/{{ building.id }}/delete"
           hx-post="/admin/buildings/{{ building.id }}/delete"
-          hx-confirm="Dieses Gebäude samt aller Wohnungen löschen?">
-      <button type="submit" class="btn btn-danger">Gebäude löschen</button>
+          hx-confirm="{{ ui.t("buildings.delete_confirm") }}">
+      <button type="submit" class="btn btn-danger">{{ ui.t("buildings.delete") }}</button>
     </form>
   </div>
 </section>

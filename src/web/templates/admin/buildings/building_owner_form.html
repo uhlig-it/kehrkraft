@@ -4,30 +4,30 @@
 
 {% block content %}
 <nav class="breadcrumb">
-  <a href="/admin">Gebäude</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><span>{{ title }}</span>
+  <a href="/admin">{{ ui.t("nav.buildings") }}</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><span>{{ title }}</span>
 </nav>
 
 <div class="page-header">
   <h1>{{ title }}: {{ building.name }}</h1>
-  <p class="subtitle">Ein Gebäudeeigentümer besitzt alle Wohnungen des Gebäudes; einzelne Wohnungseigentümer sind dann nicht erforderlich.</p>
+  <p class="subtitle">{{ ui.t("building_owner.form_help") }}</p>
 </div>
 
 <div class="card">
   {% include "admin/_error.html" %}
   {% if let Some(c) = confirmation %}
   <div class="alert alert-info" role="alert">
-    <p><strong>{{ c.previous_name }}</strong> ist derzeit als Gebäudeeigentümer über den {{ c.new_start }} hinaus erfasst. Soll das bisherige Gebäudeeigentum am <strong>{{ c.previous_end }}</strong> (dem Tag vor dem neuen Beginn) enden?</p>
-    <p class="muted">Wenn Sie das nicht bestätigen, schlägt das Anlegen des neuen Gebäudeeigentümers fehl.</p>
+    <p>{{ ui.t3("building_owner.confirm_question", &c.previous_name, &c.new_start, &c.previous_end) }}</p>
+    <p class="muted">{{ ui.t("building_owner.confirm_help") }}</p>
   </div>
   {% endif %}
   {% if let Some(w) = end_warning %}
   <div class="alert alert-warning" role="alert">
-    <p>Das Enddatum <strong>{{ w.end_date }}</strong> liegt vor dem heutigen Tag. Ab dem <strong>{{ w.uncovered_from }}</strong> hätte das Gebäude bis zur Erfassung eines neuen Gebäudeeigentümers keinen Eigentümer mehr.</p>
-    <p class="muted">Wenn Sie das nicht beabsichtigen, wählen Sie „Nein, nicht beenden" oder ändern Sie das Enddatum.</p>
+    <p>{{ ui.t2("building_owner.end_warning", &w.end_date, &w.uncovered_from) }}</p>
+    <p class="muted">{{ ui.t("building_owner.end_warning_help") }}</p>
   </div>
   {% endif %}
   <form method="post" action="{{ action }}">
-    <p class="muted">Name und E-Mail-Adresse gehören zur Person und gelten damit für alle Zeiträume, in denen sie als Eigentümerin oder Eigentümer geführt wird. Ein neues „Eigentum ab“ muss an den vorherigen Gebäudeeigentümer anschließen.</p>
+    <p class="muted">{{ ui.t("building_owner.person_help") }}</p>
     <label class="field">
       Name
       <input type="text" name="name" id="building-owner-name" list="people-names"
@@ -35,32 +35,32 @@
     </label>
 
     <label class="field">
-      E-Mail
+      {{ ui.t("form.email") }}
       <input type="email" name="email" id="building-owner-email" list="people-emails"
              value="{{ form.email }}" required />
     </label>
 
     <label class="field">
-      Eigentum ab
+      {{ ui.t("form.ownership_from") }}
       <input type="date" name="start_date" value="{{ form.start_date }}" required />
     </label>
 
     <label class="field">
-      Eigentum bis <span class="hint">(optional)</span>
+      {{ ui.t("apartments.ownership_until") }} <span class="hint">{{ ui.t("form.optional") }}</span>
       <input type="date" name="end_date" value="{% if let Some(ed) = form.end_date %}{{ ed }}{% endif %}" />
     </label>
 
     <div class="form-actions">
       {% if confirmation.is_some() %}
-      <button type="submit" name="close_previous" value="yes" class="btn btn-primary">Ja, bisheriges Gebäudeeigentum beenden und hinzufügen</button>
-      <button type="submit" name="close_previous" value="no" class="btn btn-secondary">Nein, nicht beenden</button>
+      <button type="submit" name="close_previous" value="yes" class="btn btn-primary">{{ ui.t("building_owner.close_previous") }}</button>
+      <button type="submit" name="close_previous" value="no" class="btn btn-secondary">{{ ui.t("common.no_dont_end") }}</button>
       {% elif end_warning.is_some() %}
-      <button type="submit" name="confirm_end" value="yes" class="btn btn-primary">Ja, dennoch beenden</button>
-      <button type="submit" name="confirm_end" value="no" class="btn btn-secondary">Nein, nicht beenden</button>
+      <button type="submit" name="confirm_end" value="yes" class="btn btn-primary">{{ ui.t("common.yes_end_anyway") }}</button>
+      <button type="submit" name="confirm_end" value="no" class="btn btn-secondary">{{ ui.t("common.no_dont_end") }}</button>
       {% else %}
       <button type="submit" class="btn btn-primary">{{ submit_label }}</button>
       {% endif %}
-      <a class="btn btn-secondary" href="{{ cancel_url }}">Abbrechen</a>
+      <a class="btn btn-secondary" href="{{ cancel_url }}">{{ ui.t("common.cancel") }}</a>
     </div>
   </form>
 

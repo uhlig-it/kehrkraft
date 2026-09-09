@@ -1593,7 +1593,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("Eigentum"));
+            .contains("ERR_APARTMENT_REQUIRES_OWNER"));
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM apartments")
             .fetch_one(&pool)
             .await
@@ -1628,7 +1628,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("letzte Eigentum"));
+            .contains("ERR_OWNERSHIP_LAST_DELETE"));
         // The apartment still has its owner.
         assert_eq!(
             list_ownerships(&pool, &apt.id)
@@ -1665,7 +1665,7 @@ mod tests {
         };
 
         check(
-            "Name darf nicht leer sein.",
+            "ERR_NAME_EMPTY",
             create_apartment(
                 &pool,
                 &building.id,
@@ -1682,7 +1682,7 @@ mod tests {
             .expect_err("empty owner name must be rejected"),
         );
         check(
-            "höchstens 30 Zeichen",
+            "ERR_NAME_TOO_LONG",
             create_apartment(
                 &pool,
                 &building.id,
@@ -1699,7 +1699,7 @@ mod tests {
             .expect_err("over-long apartment name must be rejected"),
         );
         check(
-            "E-Mail-Adresse",
+            "ERR_EMAIL_AT",
             create_apartment(
                 &pool,
                 &building.id,
@@ -1716,7 +1716,7 @@ mod tests {
             .expect_err("invalid e-mail must be rejected"),
         );
         check(
-            "Startdatum muss im Format",
+            "ERR_START_DATE_FORMAT",
             create_apartment(
                 &pool,
                 &building.id,
@@ -1733,7 +1733,7 @@ mod tests {
             .expect_err("invalid start date must be rejected"),
         );
         check(
-            "Startdatum darf nicht nach dem Enddatum",
+            "ERR_START_AFTER_END",
             create_apartment(
                 &pool,
                 &building.id,
@@ -1758,7 +1758,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("höchstens 30 Zeichen"));
+            .contains("ERR_NAME_TOO_LONG"));
     }
 
     #[tokio::test]
@@ -1807,14 +1807,14 @@ mod tests {
 
         // Overlapping the existing period is rejected.
         reject(
-            "überschneidet",
+            "ERR_OWNERSHIP_OVERLAP",
             create_ownership(&pool, &apt.id, "Bo", "bo@example.com", "2022-06-01", None)
                 .await
                 .expect_err("overlap must be rejected"),
         );
         // A gap after the previous period is rejected.
         reject(
-            "muss am Tag nach dem Ende",
+            "ERR_OWNERSHIP_GAP_NEXT_START",
             create_ownership(&pool, &apt.id, "Bo", "bo@example.com", "2022-07-02", None)
                 .await
                 .expect_err("gap must be rejected"),
@@ -1844,7 +1844,7 @@ mod tests {
 
         // Updating Bo into a gap (starting the day after Ada's end) is rejected.
         reject(
-            "muss am Tag nach dem Ende",
+            "ERR_OWNERSHIP_GAP_NEXT_START",
             update_ownership(
                 &pool,
                 &bo.id,
@@ -1858,7 +1858,7 @@ mod tests {
         );
         // Updating Bo into an overlap is rejected.
         reject(
-            "überschneidet",
+            "ERR_OWNERSHIP_OVERLAP",
             update_ownership(
                 &pool,
                 &bo.id,
@@ -1873,7 +1873,7 @@ mod tests {
 
         // Deleting the middle record (Bo, between Ada and Cy) is rejected...
         reject(
-            "zwischen zwei anderen",
+            "ERR_OWNERSHIP_MIDDLE_DELETE",
             delete_ownership(&pool, &bo.id)
                 .await
                 .expect_err("middle delete must be rejected"),
@@ -1894,7 +1894,7 @@ mod tests {
             .expect("delete now-last ownership"));
         // But Ada is the last remaining record and is protected.
         reject(
-            "letzte Eigentum",
+            "ERR_OWNERSHIP_LAST_DELETE",
             delete_ownership(&pool, &ada)
                 .await
                 .expect_err("last ownership delete must be rejected"),
@@ -1954,7 +1954,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("überschneidet ein bestehendes Mietverhältnis"));
+            .contains("ERR_TENANCY_OVERLAP"));
 
         // Adjacent is fine.
         let karl = create_tenancy(
@@ -1983,7 +1983,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("überschneidet"));
+            .contains("ERR_TENANCY_OVERLAP"));
     }
 
     #[tokio::test]
@@ -2140,7 +2140,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("überschneidet"));
+            .contains("ERR_BUILDING_OWNER_OVERLAP"));
         let err = create_building_owner(
             &pool,
             &building.id,
@@ -2155,7 +2155,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("Tag nach dem Ende"));
+            .contains("ERR_BUILDING_OWNER_GAP_NEXT_START"));
 
         // Tiled successors: a second period (closed), then a third period
         // that is open-ended and thus covers today (the current owner).
@@ -2211,7 +2211,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("zwischen zwei anderen"));
+            .contains("ERR_BUILDING_OWNER_MIDDLE_DELETE"));
         assert!(delete_building_owner(&pool, &first.id)
             .await
             .expect("delete building owner"));
@@ -2248,7 +2248,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("Eigentum"));
+            .contains("ERR_APARTMENT_REQUIRES_OWNER"));
 
         // …with a covering building owner it is accepted without ownership.
         create_building_owner(
@@ -2288,7 +2288,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("kann nicht gelöscht werden"));
+            .contains("ERR_BUILDING_OWNER"));
 
         // The two ownership forms are mutually exclusive (0010): this
         // building-owned apartment must not be able to acquire an ownership
@@ -2307,7 +2307,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("keinen eigenen Eigentümer"));
+            .contains("ERR_OWNERSHIP_FORBIDDEN_WHEN_BUILDING_OWNER"));
         assert!(
             list_ownerships(&pool, &apt.id)
                 .await
@@ -2364,7 +2364,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("keinen eigenen Eigentümer"));
+            .contains("ERR_OWNERSHIP_FORBIDDEN_WHEN_BUILDING_OWNER"));
         assert!(
             list_apartments(&pool, &building.id)
                 .await
@@ -2394,7 +2394,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("keinen eigenen Eigentümer"));
+            .contains("ERR_OWNERSHIP_FORBIDDEN_WHEN_BUILDING_OWNER"));
         // The rejected person insert rolled back with the ownership.
         assert_eq!(
             list_people(&pool).await.expect("list people").len(),
@@ -2429,7 +2429,7 @@ mod tests {
                 .await
                 .is_err_and(|e| {
                     e.as_database_error()
-                        .is_some_and(|d| d.message().contains("letzte Eigentum"))
+                        .is_some_and(|d| d.message().contains("ERR_OWNERSHIP_LAST_DELETE"))
                 })
         );
 
@@ -2449,7 +2449,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("kann keinen Gebäudeeigentümer haben"));
+            .contains("ERR_BUILDING_OWNER_FORBIDDEN_WHEN_APARTMENT_OWNERS"));
     }
 
     /// Helper: ownerships of an apartment (for the exclusive test above).
@@ -2661,7 +2661,7 @@ mod tests {
             .await
             .is_err_and(|e| {
                 e.as_database_error()
-                    .is_some_and(|d| d.message().contains("letzte Eigentum"))
+                    .is_some_and(|d| d.message().contains("ERR_OWNERSHIP_LAST_DELETE"))
             }));
         assert_eq!(list_people(&pool).await.expect("list people").len(), 1);
 
@@ -2851,7 +2851,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("existiert bereits"));
+            .contains("ERR_PERSON_EMAIL_TAKEN"));
         // ...and so are malformed addresses and empty names (people triggers).
         let err = update_person(&pool, &alice.id, "Alice Liddell", "no-at.example")
             .await
@@ -2860,7 +2860,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("E-Mail-Adresse"));
+            .contains("ERR_EMAIL"));
         let err = update_person(&pool, &alice.id, "  ", "alice@liddell.example")
             .await
             .expect_err("empty name must be rejected");
@@ -2868,7 +2868,7 @@ mod tests {
             .as_database_error()
             .expect("database error")
             .message()
-            .contains("Name darf nicht leer sein"));
+            .contains("ERR_NAME_EMPTY"));
         // A failed update leaves the person untouched.
         let person = get_person(&pool, &alice.id)
             .await

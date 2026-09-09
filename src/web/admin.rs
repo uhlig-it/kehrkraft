@@ -4,6 +4,7 @@ use crate::db::models::{
 };
 use crate::db::queries;
 use crate::db::Db;
+use crate::i18n::{self, Ui};
 use crate::scheduler::{self, WeekAssignment};
 use askama::Template;
 use axum::extract::{Path, RawForm, State};
@@ -61,6 +62,7 @@ fn redirect_after_post(headers: &HeaderMap, destination: &str) -> axum::response
 pub struct BuildingsIndexTemplate {
     pub title: &'static str,
     pub buildings: Vec<Building>,
+    pub ui: Ui,
 }
 
 #[derive(Template)]
@@ -84,6 +86,7 @@ pub struct BuildingsNewTemplate {
     pub owner_start_date: String,
     /// Known owners, offered as suggestions on the name/e-mail fields.
     pub people: Vec<Person>,
+    pub ui: Ui,
 }
 
 #[derive(Template)]
@@ -99,10 +102,12 @@ pub struct BuildingsEditTemplate {
     pub admin_email: String,
     /// Known people, offered as suggestions on the Ansprechpartner fields.
     pub people: Vec<Person>,
+    pub ui: Ui,
 }
 
-/// One row of the Kehrwoche roster as the templates render it: dates in
-/// German display format, plus a flag for the week that is currently running.
+/// One row of the Kehrwoche roster as the templates render it: dates in the
+/// UI language's display format, plus a flag for the week that is currently
+/// running.
 pub struct ScheduleRow {
     pub iso_week: u32,
     pub start: String,
@@ -113,13 +118,14 @@ pub struct ScheduleRow {
 }
 
 /// Map scheduler weeks to display rows, marking the week containing `today`.
-fn schedule_rows(schedule: Vec<WeekAssignment>, today: NaiveDate) -> Vec<ScheduleRow> {
+fn schedule_rows(schedule: Vec<WeekAssignment>, today: NaiveDate, ui: Ui) -> Vec<ScheduleRow> {
+    let fmt = i18n::date_format(ui.lang);
     schedule
         .into_iter()
         .map(|w| ScheduleRow {
             iso_week: w.iso_week,
-            start: w.start.format("%d.%m.%Y").to_string(),
-            end: w.end.format("%d.%m.%Y").to_string(),
+            start: w.start.format(fmt).to_string(),
+            end: w.end.format(fmt).to_string(),
             assignee_name: w.assignee_name,
             delegated: w.delegated,
             is_current: w.start <= today && today <= w.end,
@@ -183,6 +189,7 @@ pub struct BuildingsShowTemplate {
     /// is a WEG, and adding a building owner is not offered.
     pub has_apartment_owners: bool,
     pub error: Option<String>,
+    pub ui: Ui,
 }
 
 #[derive(Template)]
@@ -192,6 +199,7 @@ pub struct BuildingsScheduleTemplate {
     pub building: Building,
     pub year: i32,
     pub schedule: Vec<ScheduleRow>,
+    pub ui: Ui,
 }
 
 #[derive(Template)]
@@ -214,6 +222,7 @@ pub struct ApartmentsNewTemplate {
     pub owner_end_date: Option<String>,
     /// Known owners, offered as suggestions on the name/e-mail fields.
     pub people: Vec<Person>,
+    pub ui: Ui,
 }
 
 #[derive(Template)]
@@ -225,6 +234,7 @@ pub struct ApartmentsEditTemplate {
     pub error: Option<String>,
     pub name: String,
     pub description: String,
+    pub ui: Ui,
 }
 
 #[derive(Template)]
@@ -254,6 +264,7 @@ pub struct ApartmentsShowTemplate {
     /// the apartment cannot legally have its own owners (no WEG split), and
     /// the "Eigentümer hinzufügen" form is not offered.
     pub has_building_owner: bool,
+    pub ui: Ui,
 }
 
 #[derive(Template)]
@@ -261,6 +272,7 @@ pub struct ApartmentsShowTemplate {
 pub struct ApartmentsTableBodyTemplate {
     pub building: Building,
     pub apartments: Vec<ApartmentRow>,
+    pub ui: Ui,
 }
 
 #[derive(Template)]
@@ -278,6 +290,7 @@ pub struct OwnershipsEditTemplate {
     pub end_warning: Option<EndDateWarning>,
     /// Known owners, offered as suggestions on the name/e-mail fields.
     pub people: Vec<Person>,
+    pub ui: Ui,
 }
 
 #[derive(Template)]
@@ -292,6 +305,7 @@ pub struct TenanciesEditTemplate {
     pub form: TenancyForm,
     /// Known people, offered as suggestions on the name/e-mail fields.
     pub people: Vec<Person>,
+    pub ui: Ui,
 }
 
 // --- Buildings ---
@@ -333,44 +347,47 @@ pub struct UpdateBuildingForm {
 
 /// Extract a database-level error message so it can be shown inline on the
 /// form that caused it. All validation rules live in the database (triggers
-/// that `RAISE(ABORT, …)` with a German message, see 0004_validation_in_db.sql);
-/// `None` means a transport/connection-level failure, not a rejection.
-fn db_message(err: &sqlx::Error) -> Option<String> {
-    err.as_database_error().map(|e| e.message().to_owned())
+/// that `RAISE(ABORT, …)` with a stable `ERR_*` code, see 0012); the code is
+/// translated into the UI language here. `None` means a transport/connection-
+/// level failure, not a rejection.
+fn db_message(err: &sqlx::Error, ui: Ui) -> Option<String> {
+    err.as_database_error()
+        .map(|e| i18n::db_msg(ui.lang, e.message()))
 }
 
 /// Load the known people (owner master data) for the suggestion lists, or
 /// return a short error response.
-async fn load_people(pool: &Db) -> Result<Vec<Person>, (axum::http::StatusCode, &'static str)> {
+async fn load_people(pool: &Db, ui: Ui) -> Result<Vec<Person>, (axum::http::StatusCode, String)> {
     queries::list_people(pool).await.map_err(|_| {
         (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Personen konnten nicht geladen werden.",
+            i18n::msg(ui.lang, "error.people_load").to_string(),
         )
     })
 }
 
-pub async fn buildings_index(State(pool): State<Db>) -> impl axum::response::IntoResponse {
+pub async fn buildings_index(State(pool): State<Db>, ui: Ui) -> impl axum::response::IntoResponse {
     match queries::list_buildings(&pool).await {
         Ok(buildings) => render(BuildingsIndexTemplate {
-            title: "Gebäude",
+            title: i18n::msg(ui.lang, "buildings.heading"),
             buildings,
+            ui,
         }),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Gebäude konnten nicht geladen werden.",
+            i18n::msg(ui.lang, "error.buildings_load"),
         )
             .into_response(),
     }
 }
 
-pub async fn buildings_new(State(pool): State<Db>) -> impl axum::response::IntoResponse {
-    let people = match load_people(&pool).await {
+pub async fn buildings_new(State(pool): State<Db>, ui: Ui) -> impl axum::response::IntoResponse {
+    let people = match load_people(&pool, ui).await {
         Ok(p) => p,
         Err(err) => return err.into_response(),
     };
     render(BuildingsNewTemplate {
-        title: "Neues Gebäude anlegen",
+        title: i18n::msg(ui.lang, "buildings.new_title"),
         error: None,
         name: String::new(),
         description: String::new(),
@@ -381,11 +398,13 @@ pub async fn buildings_new(State(pool): State<Db>) -> impl axum::response::IntoR
         owner_email: String::new(),
         owner_start_date: String::new(),
         people,
+        ui,
     })
 }
 
 pub async fn buildings_create(
     State(pool): State<Db>,
+    ui: Ui,
     Form(form): Form<CreateBuildingForm>,
 ) -> impl axum::response::IntoResponse {
     // The ownership structure chosen on the form decides whether the owner
@@ -396,15 +415,13 @@ pub async fn buildings_create(
             && form.owner_email.trim().is_empty()
             && form.owner_start_date.trim().is_empty()
         {
-            let people = match load_people(&pool).await {
+            let people = match load_people(&pool, ui).await {
                 Ok(p) => p,
                 Err(err) => return err.into_response(),
             };
             return render_bad_request(BuildingsNewTemplate {
-                title: "Neues Gebäude anlegen",
-                error: Some(
-                    "Für ein Gebäude mit einem einzigen Eigentümer müssen Name, E-Mail-Adresse und Beginn („Eigentum ab“) angegeben werden.".to_string(),
-                ),
+                title: i18n::msg(ui.lang, "buildings.new_title"),
+                error: Some(i18n::msg(ui.lang, "buildings.owner_required").to_string()),
                 name: form.name,
                 description: form.description,
                 admin_name: form.admin_name,
@@ -414,6 +431,7 @@ pub async fn buildings_create(
                 owner_email: form.owner_email,
                 owner_start_date: form.owner_start_date,
                 people,
+                ui,
             });
         }
         Some(queries::NewOwner {
@@ -450,14 +468,14 @@ pub async fn buildings_create(
     };
     match result {
         Ok(building) => Redirect::to(&format!("/admin/buildings/{}", building.id)).into_response(),
-        Err(err) => match db_message(&err) {
+        Err(err) => match db_message(&err, ui) {
             Some(msg) => {
-                let people = match load_people(&pool).await {
+                let people = match load_people(&pool, ui).await {
                     Ok(p) => p,
                     Err(err) => return err.into_response(),
                 };
                 render_bad_request(BuildingsNewTemplate {
-                    title: "Neues Gebäude anlegen",
+                    title: i18n::msg(ui.lang, "buildings.new_title"),
                     error: Some(msg),
                     name: form.name,
                     description: form.description,
@@ -468,11 +486,12 @@ pub async fn buildings_create(
                     owner_email: form.owner_email,
                     owner_start_date: form.owner_start_date,
                     people,
+                    ui,
                 })
             }
             None => (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Gebäude konnte nicht angelegt werden.",
+                i18n::msg(ui.lang, "error.building_create"),
             )
                 .into_response(),
         },
@@ -482,21 +501,28 @@ pub async fn buildings_create(
 pub async fn buildings_edit(
     Path(id): Path<String>,
     State(pool): State<Db>,
+    ui: Ui,
 ) -> impl axum::response::IntoResponse {
     // get_building also returns the administrators, so the form can pre-fill
     // the Ansprechpartner fields with the current contact.
     let (building, admins) = match queries::get_building(&pool, &id).await {
         Ok(Some(found)) => found,
-        Ok(None) => return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        Ok(None) => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                i18n::msg(ui.lang, "common.not_found"),
+            )
+                .into_response()
+        }
         Err(_) => {
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Gebäude konnte nicht geladen werden.",
+                i18n::msg(ui.lang, "error.building_load"),
             )
                 .into_response()
         }
     };
-    let people = match load_people(&pool).await {
+    let people = match load_people(&pool, ui).await {
         Ok(p) => p,
         Err(err) => return err.into_response(),
     };
@@ -504,7 +530,7 @@ pub async fn buildings_edit(
     let name = building.name.clone();
     let description = building.description.clone();
     render(BuildingsEditTemplate {
-        title: "Gebäude bearbeiten",
+        title: i18n::msg(ui.lang, "buildings.edit_title"),
         building,
         error: None,
         name,
@@ -512,15 +538,17 @@ pub async fn buildings_edit(
         admin_name: admin.map_or_else(String::new, |a| a.name.clone()),
         admin_email: admin.map_or_else(String::new, |a| a.email.clone()),
         people,
+        ui,
     })
 }
 
 pub async fn buildings_update(
     Path(id): Path<String>,
     State(pool): State<Db>,
+    ui: Ui,
     Form(form): Form<UpdateBuildingForm>,
 ) -> impl axum::response::IntoResponse {
-    let building = match load_building(&pool, &id).await {
+    let building = match load_building(&pool, &id, ui).await {
         Ok(b) => b,
         Err(err) => return err.into_response(),
     };
@@ -534,14 +562,14 @@ pub async fn buildings_update(
 
     match queries::update_building(&pool, &id, &form.name, &form.description, administrator).await {
         Ok(_) => Redirect::to(&format!("/admin/buildings/{id}")).into_response(),
-        Err(err) => match db_message(&err) {
+        Err(err) => match db_message(&err, ui) {
             Some(msg) => {
-                let people = match load_people(&pool).await {
+                let people = match load_people(&pool, ui).await {
                     Ok(p) => p,
                     Err(err) => return err.into_response(),
                 };
                 render_bad_request(BuildingsEditTemplate {
-                    title: "Gebäude bearbeiten",
+                    title: i18n::msg(ui.lang, "buildings.edit_title"),
                     building,
                     error: Some(msg),
                     name: form.name,
@@ -549,11 +577,12 @@ pub async fn buildings_update(
                     admin_name: form.admin_name,
                     admin_email: form.admin_email,
                     people,
+                    ui,
                 })
             }
             None => (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Gebäude konnte nicht gespeichert werden.",
+                i18n::msg(ui.lang, "error.building_save"),
             )
                 .into_response(),
         },
@@ -567,6 +596,7 @@ async fn render_building_page(
     pool: &Db,
     building_id: &str,
     error: Option<String>,
+    ui: Ui,
 ) -> axum::response::Response {
     match queries::get_building(pool, building_id).await {
         Ok(Some((building, admins))) => {
@@ -575,7 +605,7 @@ async fn render_building_page(
                 Err(_) => {
                     return (
                         axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        "Wohnungen konnten nicht geladen werden.",
+                        i18n::msg(ui.lang, "error.apartments_load"),
                     )
                         .into_response()
                 }
@@ -585,7 +615,7 @@ async fn render_building_page(
                 Err(_) => {
                     return (
                         axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        "Gebäudeeigentümer konnten nicht geladen werden.",
+                        i18n::msg(ui.lang, "error.building_owners_load"),
                     )
                         .into_response()
                 }
@@ -603,7 +633,7 @@ async fn render_building_page(
                     Err(_) => {
                         return (
                             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                            "Der Plan konnte nicht berechnet werden.",
+                            i18n::msg(ui.lang, "error.schedule_compute"),
                         )
                             .into_response()
                     }
@@ -618,7 +648,7 @@ async fn render_building_page(
                     Err(_) => {
                         return (
                             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                            "Eigentumsverhältnisse konnten nicht geladen werden.",
+                            i18n::msg(ui.lang, "error.ownership_structure_load"),
                         )
                             .into_response()
                     }
@@ -630,16 +660,21 @@ async fn render_building_page(
                 building_owners,
                 apartments,
                 year,
-                schedule: schedule_rows(schedule, today),
+                schedule: schedule_rows(schedule, today, ui),
                 rotation_options,
                 has_apartment_owners,
                 error,
+                ui,
             })
         }
-        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        Ok(None) => (
+            axum::http::StatusCode::NOT_FOUND,
+            i18n::msg(ui.lang, "common.not_found"),
+        )
+            .into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Gebäude konnte nicht geladen werden.",
+            i18n::msg(ui.lang, "error.building_load"),
         )
             .into_response(),
     }
@@ -648,13 +683,15 @@ async fn render_building_page(
 pub async fn buildings_show(
     Path(id): Path<String>,
     State(pool): State<Db>,
+    ui: Ui,
 ) -> impl axum::response::IntoResponse {
-    render_building_page(&pool, &id, None).await
+    render_building_page(&pool, &id, None, ui).await
 }
 
 pub async fn buildings_schedule(
     Path(id): Path<String>,
     State(pool): State<Db>,
+    ui: Ui,
 ) -> impl axum::response::IntoResponse {
     match queries::get_building(&pool, &id).await {
         Ok(Some((building, _admins))) => {
@@ -662,22 +699,27 @@ pub async fn buildings_schedule(
             let today = Local::now().date_naive();
             match scheduler::schedule_for_year(&building.id, year, &pool).await {
                 Ok(schedule) => render(BuildingsScheduleTemplate {
-                    title: "Jahresplan".to_string(),
+                    title: i18n::msg(ui.lang, "schedule.title").to_string(),
                     building,
                     year,
-                    schedule: schedule_rows(schedule, today),
+                    schedule: schedule_rows(schedule, today, ui),
+                    ui,
                 }),
                 Err(_) => (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    "Der Plan konnte nicht berechnet werden.",
+                    i18n::msg(ui.lang, "error.schedule_compute"),
                 )
                     .into_response(),
             }
         }
-        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        Ok(None) => (
+            axum::http::StatusCode::NOT_FOUND,
+            i18n::msg(ui.lang, "common.not_found"),
+        )
+            .into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Gebäude konnte nicht geladen werden.",
+            i18n::msg(ui.lang, "error.building_load"),
         )
             .into_response(),
     }
@@ -719,16 +761,17 @@ pub async fn buildings_rotation_seed_update(
     Path(id): Path<String>,
     State(pool): State<Db>,
     headers: HeaderMap,
+    ui: Ui,
     Form(form): Form<RotationSeedForm>,
 ) -> impl axum::response::IntoResponse {
-    if let Err(err) = load_building(&pool, &id).await {
+    if let Err(err) = load_building(&pool, &id, ui).await {
         return err.into_response();
     }
     match queries::update_building_rotation_seed(&pool, &id, form.rotation_seed).await {
         Ok(_) => redirect_after_post(&headers, &format!("/admin/buildings/{id}")),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Rotations-Versatz konnte nicht gespeichert werden.",
+            i18n::msg(ui.lang, "error.rotation_save"),
         )
             .into_response(),
     }
@@ -770,13 +813,17 @@ pub struct UpdateApartmentForm {
 async fn load_building(
     pool: &Db,
     building_id: &str,
-) -> Result<Building, (axum::http::StatusCode, &'static str)> {
+    ui: Ui,
+) -> Result<Building, (axum::http::StatusCode, String)> {
     match queries::get_building(pool, building_id).await {
         Ok(Some((building, _))) => Ok(building),
-        Ok(None) => Err((axum::http::StatusCode::NOT_FOUND, "Nicht gefunden")),
+        Ok(None) => Err((
+            axum::http::StatusCode::NOT_FOUND,
+            i18n::msg(ui.lang, "common.not_found").to_string(),
+        )),
         Err(_) => Err((
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Gebäude konnte nicht geladen werden.",
+            i18n::msg(ui.lang, "error.building_load").to_string(),
         )),
     }
 }
@@ -786,18 +833,25 @@ async fn load_apartment_owned_by(
     pool: &Db,
     building_id: &str,
     apartment_id: &str,
-) -> Result<Apartment, (axum::http::StatusCode, &'static str)> {
+    ui: Ui,
+) -> Result<Apartment, (axum::http::StatusCode, String)> {
     match queries::get_apartment(pool, apartment_id).await {
         Ok(Some(apartment)) => {
             if apartment.building_id != building_id {
-                return Err((axum::http::StatusCode::NOT_FOUND, "Nicht gefunden"));
+                return Err((
+                    axum::http::StatusCode::NOT_FOUND,
+                    i18n::msg(ui.lang, "common.not_found").to_string(),
+                ));
             }
             Ok(apartment)
         }
-        Ok(None) => Err((axum::http::StatusCode::NOT_FOUND, "Nicht gefunden")),
+        Ok(None) => Err((
+            axum::http::StatusCode::NOT_FOUND,
+            i18n::msg(ui.lang, "common.not_found").to_string(),
+        )),
         Err(_) => Err((
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Wohnung konnte nicht geladen werden.",
+            i18n::msg(ui.lang, "error.apartment_load").to_string(),
         )),
     }
 }
@@ -816,9 +870,10 @@ async fn load_apartment_show(
     pool: &Db,
     building_id: &str,
     apartment_id: &str,
-) -> Result<ApartmentShowParts, (axum::http::StatusCode, &'static str)> {
-    let building = load_building(pool, building_id).await?;
-    let apartment = load_apartment_owned_by(pool, building_id, apartment_id).await?;
+    ui: Ui,
+) -> Result<ApartmentShowParts, (axum::http::StatusCode, String)> {
+    let building = load_building(pool, building_id, ui).await?;
+    let apartment = load_apartment_owned_by(pool, building_id, apartment_id, ui).await?;
     let (ownerships, tenancies) = match (
         queries::list_ownerships(pool, apartment_id).await,
         queries::list_tenancies(pool, apartment_id).await,
@@ -827,11 +882,11 @@ async fn load_apartment_show(
         _ => {
             return Err((
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Wohnungsdaten konnten nicht geladen werden.",
+                i18n::msg(ui.lang, "error.apartment_data_load").to_string(),
             ))
         }
     };
-    let people = load_people(pool).await?;
+    let people = load_people(pool, ui).await?;
     let has_building_owner = queries::get_current_building_owner(pool, building_id)
         .await
         .map(|owner| owner.is_some())
@@ -855,8 +910,9 @@ async fn render_apartment_show_error(
     error: String,
     owner_form: Option<OwnershipForm>,
     tenant_form: Option<TenancyForm>,
+    ui: Ui,
 ) -> axum::response::Response {
-    match load_apartment_show(pool, building_id, apartment_id).await {
+    match load_apartment_show(pool, building_id, apartment_id, ui).await {
         Ok(parts) => render_bad_request(ApartmentsShowTemplate {
             title: parts.apartment.name.clone(),
             building: parts.building,
@@ -870,6 +926,7 @@ async fn render_apartment_show_error(
             tenant_confirmation: None,
             people: parts.people,
             has_building_owner: parts.has_building_owner,
+            ui,
         }),
         Err((status, msg)) => (status, msg).into_response(),
     }
@@ -878,6 +935,7 @@ async fn render_apartment_show_error(
 /// Re-render the apartment page asking whether the previous ownership/tenancy
 /// shall end on the day before the new one begins. The submitted values stay
 /// in `owner_form`/`tenant_form`; exactly one of the two confirmations is set.
+#[allow(clippy::too_many_arguments)]
 async fn render_apartment_show_confirmation(
     pool: &Db,
     building_id: &str,
@@ -886,8 +944,9 @@ async fn render_apartment_show_confirmation(
     tenant_confirmation: Option<TenancyConfirmation>,
     owner_form: Option<OwnershipForm>,
     tenant_form: Option<TenancyForm>,
+    ui: Ui,
 ) -> axum::response::Response {
-    match load_apartment_show(pool, building_id, apartment_id).await {
+    match load_apartment_show(pool, building_id, apartment_id, ui).await {
         Ok(parts) => render(ApartmentsShowTemplate {
             title: parts.apartment.name.clone(),
             building: parts.building,
@@ -901,6 +960,7 @@ async fn render_apartment_show_confirmation(
             tenant_confirmation,
             people: parts.people,
             has_building_owner: parts.has_building_owner,
+            ui,
         }),
         Err((status, msg)) => (status, msg).into_response(),
     }
@@ -916,12 +976,13 @@ pub async fn apartments_index_redirect(
 pub async fn apartments_new(
     Path(building_id): Path<String>,
     State(pool): State<Db>,
+    ui: Ui,
 ) -> impl axum::response::IntoResponse {
-    let building = match load_building(&pool, &building_id).await {
+    let building = match load_building(&pool, &building_id, ui).await {
         Ok(b) => b,
         Err(err) => return err.into_response(),
     };
-    let people = match load_people(&pool).await {
+    let people = match load_people(&pool, ui).await {
         Ok(p) => p,
         Err(err) => return err.into_response(),
     };
@@ -930,7 +991,7 @@ pub async fn apartments_new(
         .map(|owner| owner.is_some())
         .unwrap_or(false);
     render(ApartmentsNewTemplate {
-        title: "Neue Wohnung",
+        title: i18n::msg(ui.lang, "apartments.new"),
         building,
         error: None,
         name: String::new(),
@@ -941,12 +1002,14 @@ pub async fn apartments_new(
         owner_start_date: String::new(),
         owner_end_date: None,
         people,
+        ui,
     })
 }
 
 pub async fn apartments_create(
     Path(building_id): Path<String>,
     State(pool): State<Db>,
+    ui: Ui,
     Form(form): Form<CreateApartmentForm>,
 ) -> impl axum::response::IntoResponse {
     // When the building has a building owner, the owner fields are optional:
@@ -993,18 +1056,18 @@ pub async fn apartments_create(
             apartment.id
         ))
         .into_response(),
-        Err(err) => match db_message(&err) {
+        Err(err) => match db_message(&err, ui) {
             Some(msg) => {
-                let building = match load_building(&pool, &building_id).await {
+                let building = match load_building(&pool, &building_id, ui).await {
                     Ok(b) => b,
                     Err(err) => return err.into_response(),
                 };
-                let people = match load_people(&pool).await {
+                let people = match load_people(&pool, ui).await {
                     Ok(p) => p,
                     Err(err) => return err.into_response(),
                 };
                 render_bad_request(ApartmentsNewTemplate {
-                    title: "Neue Wohnung",
+                    title: i18n::msg(ui.lang, "apartments.new"),
                     building,
                     error: Some(msg),
                     name: form.name,
@@ -1015,11 +1078,12 @@ pub async fn apartments_create(
                     owner_start_date: form.owner_start_date,
                     owner_end_date: form.owner_end_date,
                     people,
+                    ui,
                 })
             }
             None => (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Wohnung konnte nicht angelegt werden.",
+                i18n::msg(ui.lang, "error.apartment_create"),
             )
                 .into_response(),
         },
@@ -1029,36 +1093,39 @@ pub async fn apartments_create(
 pub async fn apartments_edit(
     Path((building_id, apartment_id)): Path<(String, String)>,
     State(pool): State<Db>,
+    ui: Ui,
 ) -> impl axum::response::IntoResponse {
-    let building = match load_building(&pool, &building_id).await {
+    let building = match load_building(&pool, &building_id, ui).await {
         Ok(b) => b,
         Err(err) => return err.into_response(),
     };
-    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
+    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id, ui).await {
         Ok(a) => a,
         Err(err) => return err.into_response(),
     };
     let name = apartment.name.clone();
     let description = apartment.description.clone();
     render(ApartmentsEditTemplate {
-        title: "Wohnung bearbeiten".to_string(),
+        title: i18n::msg(ui.lang, "apartments.edit_title").to_string(),
         building,
         apartment,
         error: None,
         name,
         description,
+        ui,
     })
 }
 
 pub async fn apartments_show(
     Path((building_id, apartment_id)): Path<(String, String)>,
     State(pool): State<Db>,
+    ui: Ui,
 ) -> impl axum::response::IntoResponse {
-    let building = match load_building(&pool, &building_id).await {
+    let building = match load_building(&pool, &building_id, ui).await {
         Ok(b) => b,
         Err(err) => return err.into_response(),
     };
-    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
+    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id, ui).await {
         Ok(a) => a,
         Err(err) => return err.into_response(),
     };
@@ -1068,7 +1135,7 @@ pub async fn apartments_show(
         queries::list_tenancies(&pool, &apartment_id).await,
     ) {
         (Ok(ownerships), Ok(tenancies)) => {
-            let people = match load_people(&pool).await {
+            let people = match load_people(&pool, ui).await {
                 Ok(p) => p,
                 Err(err) => return err.into_response(),
             };
@@ -1089,11 +1156,12 @@ pub async fn apartments_show(
                 tenant_confirmation: None,
                 people,
                 has_building_owner,
+                ui,
             })
         }
         _ => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Wohnungsdaten konnten nicht geladen werden.",
+            i18n::msg(ui.lang, "error.apartment_data_load"),
         )
             .into_response(),
     }
@@ -1102,9 +1170,10 @@ pub async fn apartments_show(
 pub async fn apartments_update(
     Path((building_id, apartment_id)): Path<(String, String)>,
     State(pool): State<Db>,
+    ui: Ui,
     Form(form): Form<UpdateApartmentForm>,
 ) -> impl axum::response::IntoResponse {
-    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
+    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id, ui).await {
         Ok(a) => a,
         Err(err) => return err.into_response(),
     };
@@ -1113,24 +1182,25 @@ pub async fn apartments_update(
             "/admin/buildings/{building_id}/apartments/{apartment_id}"
         ))
         .into_response(),
-        Err(err) => match db_message(&err) {
+        Err(err) => match db_message(&err, ui) {
             Some(msg) => {
-                let building = match load_building(&pool, &building_id).await {
+                let building = match load_building(&pool, &building_id, ui).await {
                     Ok(b) => b,
                     Err(err) => return err.into_response(),
                 };
                 render_bad_request(ApartmentsEditTemplate {
-                    title: "Wohnung bearbeiten".to_string(),
+                    title: i18n::msg(ui.lang, "apartments.edit_title").to_string(),
                     building,
                     apartment,
                     error: Some(msg),
                     name: form.name,
                     description: form.description,
+                    ui,
                 })
             }
             None => (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Wohnung konnte nicht gespeichert werden.",
+                i18n::msg(ui.lang, "error.apartment_save"),
             )
                 .into_response(),
         },
@@ -1141,8 +1211,9 @@ pub async fn apartments_delete(
     Path((building_id, apartment_id)): Path<(String, String)>,
     State(pool): State<Db>,
     headers: HeaderMap,
+    ui: Ui,
 ) -> impl axum::response::IntoResponse {
-    if let Err(err) = load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
+    if let Err(err) = load_apartment_owned_by(&pool, &building_id, &apartment_id, ui).await {
         return err.into_response();
     }
     let _ = queries::delete_apartment(&pool, &apartment_id).await;
@@ -1161,6 +1232,7 @@ pub async fn apartments_delete(
 pub async fn apartments_reorder(
     Path(building_id): Path<String>,
     State(pool): State<Db>,
+    ui: Ui,
     RawForm(body): RawForm,
 ) -> impl axum::response::IntoResponse {
     // Apartment ids in their new DOM order, one `item` field per row.
@@ -1177,21 +1249,21 @@ pub async fn apartments_reorder(
         Ok(false) => {
             return (
                 axum::http::StatusCode::BAD_REQUEST,
-                "Ungültige Reihenfolge der Wohnungen",
+                i18n::msg(ui.lang, "error.apartment_order"),
             )
                 .into_response()
         }
         Err(_) => {
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Die Reihenfolge konnte nicht gespeichert werden.",
+                i18n::msg(ui.lang, "error.order_save"),
             )
                 .into_response()
         }
     }
 
     // Re-render just the table body so htmx can swap in the new order.
-    let building = match load_building(&pool, &building_id).await {
+    let building = match load_building(&pool, &building_id, ui).await {
         Ok(b) => b,
         Err(err) => return err.into_response(),
     };
@@ -1200,7 +1272,7 @@ pub async fn apartments_reorder(
         Err(_) => {
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Wohnungen konnten nicht neu geladen werden.",
+                i18n::msg(ui.lang, "error.apartments_reload"),
             )
                 .into_response()
         }
@@ -1208,6 +1280,7 @@ pub async fn apartments_reorder(
     render(ApartmentsTableBodyTemplate {
         building,
         apartments,
+        ui,
     })
 }
 
@@ -1319,20 +1392,29 @@ async fn ownership_created(
     apartment_id: &str,
     form: OwnershipForm,
     result: Result<Ownership, sqlx::Error>,
+    ui: Ui,
 ) -> axum::response::Response {
     match result {
         Ok(_) => Redirect::to(&format!(
             "/admin/buildings/{building_id}/apartments/{apartment_id}"
         ))
         .into_response(),
-        Err(err) => match db_message(&err) {
+        Err(err) => match db_message(&err, ui) {
             Some(msg) => {
-                render_apartment_show_error(pool, building_id, apartment_id, msg, Some(form), None)
-                    .await
+                render_apartment_show_error(
+                    pool,
+                    building_id,
+                    apartment_id,
+                    msg,
+                    Some(form),
+                    None,
+                    ui,
+                )
+                .await
             }
             None => (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Eigentum konnte nicht angelegt werden.",
+                i18n::msg(ui.lang, "error.ownership_create"),
             )
                 .into_response(),
         },
@@ -1342,9 +1424,10 @@ async fn ownership_created(
 pub async fn ownerships_create(
     Path((building_id, apartment_id)): Path<(String, String)>,
     State(pool): State<Db>,
+    ui: Ui,
     Form(form): Form<OwnershipForm>,
 ) -> impl axum::response::IntoResponse {
-    if let Err(err) = load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
+    if let Err(err) = load_apartment_owned_by(&pool, &building_id, &apartment_id, ui).await {
         return err.into_response();
     }
     let end_opt = normalize_end_date(form.end_date.as_deref());
@@ -1371,7 +1454,8 @@ pub async fn ownerships_create(
                     end_opt,
                 )
                 .await;
-                return ownership_created(&pool, &building_id, &apartment_id, form, result).await;
+                return ownership_created(&pool, &building_id, &apartment_id, form, result, ui)
+                    .await;
             }
         };
         match form.close_previous.as_deref() {
@@ -1388,6 +1472,7 @@ pub async fn ownerships_create(
                     None,
                     Some(form),
                     None,
+                    ui,
                 )
                 .await
             }
@@ -1405,7 +1490,8 @@ pub async fn ownerships_create(
                     end_opt,
                 )
                 .await;
-                return ownership_created(&pool, &building_id, &apartment_id, form, result).await;
+                return ownership_created(&pool, &building_id, &apartment_id, form, result, ui)
+                    .await;
             }
             _ => {
                 // The user declined to end the previous ownership the day
@@ -1414,12 +1500,14 @@ pub async fn ownerships_create(
                     &pool,
                     &building_id,
                     &apartment_id,
-                    format!(
-                        "Ohne das bisherige Eigentum von {} am {} zu beenden, kann das neue Eigentum nicht angelegt werden.",
-                        prev.name, prev_end
+                    i18n::msgf(
+                        ui.lang,
+                        "ownership.decline_close",
+                        &[prev.name.as_str(), prev_end.as_str()],
                     ),
                     Some(form),
                     None,
+                    ui,
                 )
                 .await;
             }
@@ -1442,12 +1530,14 @@ pub async fn ownerships_create(
                     &pool,
                     &building_id,
                     &apartment_id,
-                    format!(
-                        "Das Eigentum muss am Tag nach dem Ende des vorherigen Eigentums beginnen; das vorherige Eigentum endet am {prev_end}, der neue Beginn muss am {next} liegen (nicht am {}).",
-                        form.start_date
+                    i18n::msgf(
+                        ui.lang,
+                        "ownership.gap_dates",
+                        &[prev_end.as_str(), next.as_str(), form.start_date.as_str()],
                     ),
                     Some(form),
                     None,
+                    ui,
                 )
                 .await;
             }
@@ -1465,27 +1555,32 @@ pub async fn ownerships_create(
         end_opt,
     )
     .await;
-    ownership_created(&pool, &building_id, &apartment_id, form, result).await
+    ownership_created(&pool, &building_id, &apartment_id, form, result, ui).await
 }
 
 pub async fn ownerships_edit(
     Path((building_id, apartment_id, ownership_id)): Path<(String, String, String)>,
     State(pool): State<Db>,
+    ui: Ui,
 ) -> impl axum::response::IntoResponse {
-    let building = match load_building(&pool, &building_id).await {
+    let building = match load_building(&pool, &building_id, ui).await {
         Ok(b) => b,
         Err(err) => return err.into_response(),
     };
-    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
+    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id, ui).await {
         Ok(a) => a,
         Err(err) => return err.into_response(),
     };
     match queries::get_ownership(&pool, &ownership_id).await {
         Ok(Some(ownership)) => {
             if ownership.apartment_id != apartment_id {
-                return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
+                return (
+                    axum::http::StatusCode::NOT_FOUND,
+                    i18n::msg(ui.lang, "common.not_found"),
+                )
+                    .into_response();
             }
-            let people = match load_people(&pool).await {
+            let people = match load_people(&pool, ui).await {
                 Ok(p) => p,
                 Err(err) => return err.into_response(),
             };
@@ -1498,7 +1593,7 @@ pub async fn ownerships_edit(
                 confirm_end: None,
             };
             render(OwnershipsEditTemplate {
-                title: "Eigentümer bearbeiten".to_string(),
+                title: i18n::msg(ui.lang, "ownership.edit_title").to_string(),
                 building,
                 apartment,
                 ownership,
@@ -1506,12 +1601,17 @@ pub async fn ownerships_edit(
                 form,
                 end_warning: None,
                 people,
+                ui,
             })
         }
-        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        Ok(None) => (
+            axum::http::StatusCode::NOT_FOUND,
+            i18n::msg(ui.lang, "common.not_found"),
+        )
+            .into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Eigentum konnte nicht geladen werden.",
+            i18n::msg(ui.lang, "error.ownership_load"),
         )
             .into_response(),
     }
@@ -1526,17 +1626,18 @@ async fn render_ownership_edit_error(
     ownership: &Ownership,
     error: String,
     form: OwnershipForm,
+    ui: Ui,
 ) -> axum::response::Response {
-    let building = match load_building(pool, building_id).await {
+    let building = match load_building(pool, building_id, ui).await {
         Ok(b) => b,
         Err(err) => return err.into_response(),
     };
-    let people = match load_people(pool).await {
+    let people = match load_people(pool, ui).await {
         Ok(p) => p,
         Err(err) => return err.into_response(),
     };
     render_bad_request(OwnershipsEditTemplate {
-        title: "Eigentümer bearbeiten".to_string(),
+        title: i18n::msg(ui.lang, "ownership.edit_title").to_string(),
         building,
         apartment: apartment.clone(),
         ownership: ownership.clone(),
@@ -1544,6 +1645,7 @@ async fn render_ownership_edit_error(
         form,
         end_warning: None,
         people,
+        ui,
     })
 }
 
@@ -1586,17 +1688,18 @@ async fn render_ownership_edit_warning(
     ownership: &Ownership,
     form: OwnershipForm,
     end_warning: EndDateWarning,
+    ui: Ui,
 ) -> axum::response::Response {
-    let building = match load_building(pool, building_id).await {
+    let building = match load_building(pool, building_id, ui).await {
         Ok(b) => b,
         Err(err) => return err.into_response(),
     };
-    let people = match load_people(pool).await {
+    let people = match load_people(pool, ui).await {
         Ok(p) => p,
         Err(err) => return err.into_response(),
     };
     render(OwnershipsEditTemplate {
-        title: "Eigentümer bearbeiten".to_string(),
+        title: i18n::msg(ui.lang, "ownership.edit_title").to_string(),
         building,
         apartment: apartment.clone(),
         ownership: ownership.clone(),
@@ -1604,15 +1707,17 @@ async fn render_ownership_edit_warning(
         form,
         end_warning: Some(end_warning),
         people,
+        ui,
     })
 }
 
 pub async fn ownerships_update(
     Path((building_id, apartment_id, ownership_id)): Path<(String, String, String)>,
     State(pool): State<Db>,
+    ui: Ui,
     Form(form): Form<OwnershipForm>,
 ) -> impl axum::response::IntoResponse {
-    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
+    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id, ui).await {
         Ok(a) => a,
         Err(err) => return err.into_response(),
     };
@@ -1620,11 +1725,21 @@ pub async fn ownerships_update(
     let ownership = match queries::get_ownership(&pool, &ownership_id).await {
         Ok(Some(existing)) => {
             if existing.apartment_id != apartment_id {
-                return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
+                return (
+                    axum::http::StatusCode::NOT_FOUND,
+                    i18n::msg(ui.lang, "common.not_found"),
+                )
+                    .into_response();
             }
             existing
         }
-        _ => return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        _ => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                i18n::msg(ui.lang, "common.not_found"),
+            )
+                .into_response()
+        }
     };
 
     let end_opt = normalize_end_date(form.end_date.as_deref());
@@ -1642,6 +1757,7 @@ pub async fn ownerships_update(
                     &ownership,
                     form,
                     warning,
+                    ui,
                 )
                 .await;
             }
@@ -1671,14 +1787,22 @@ pub async fn ownerships_update(
             "/admin/buildings/{building_id}/apartments/{apartment_id}"
         ))
         .into_response(),
-        Err(err) => match db_message(&err) {
+        Err(err) => match db_message(&err, ui) {
             Some(msg) => {
-                render_ownership_edit_error(&pool, &building_id, &apartment, &ownership, msg, form)
-                    .await
+                render_ownership_edit_error(
+                    &pool,
+                    &building_id,
+                    &apartment,
+                    &ownership,
+                    msg,
+                    form,
+                    ui,
+                )
+                .await
             }
             None => (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Eigentum konnte nicht gespeichert werden.",
+                i18n::msg(ui.lang, "error.ownership_save"),
             )
                 .into_response(),
         },
@@ -1689,17 +1813,28 @@ pub async fn ownerships_delete(
     Path((building_id, apartment_id, ownership_id)): Path<(String, String, String)>,
     State(pool): State<Db>,
     headers: HeaderMap,
+    ui: Ui,
 ) -> impl axum::response::IntoResponse {
-    if let Err(err) = load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
+    if let Err(err) = load_apartment_owned_by(&pool, &building_id, &apartment_id, ui).await {
         return err.into_response();
     }
     match queries::get_ownership(&pool, &ownership_id).await {
         Ok(Some(existing)) => {
             if existing.apartment_id != apartment_id {
-                return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
+                return (
+                    axum::http::StatusCode::NOT_FOUND,
+                    i18n::msg(ui.lang, "common.not_found"),
+                )
+                    .into_response();
             }
         }
-        _ => return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        _ => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                i18n::msg(ui.lang, "common.not_found"),
+            )
+                .into_response()
+        }
     }
 
     // The database rejects deleting the apartment's last ownership or a period
@@ -1709,14 +1844,14 @@ pub async fn ownerships_delete(
             &headers,
             &format!("/admin/buildings/{building_id}/apartments/{apartment_id}"),
         ),
-        Err(err) => match db_message(&err) {
+        Err(err) => match db_message(&err, ui) {
             Some(msg) => {
-                render_apartment_show_error(&pool, &building_id, &apartment_id, msg, None, None)
+                render_apartment_show_error(&pool, &building_id, &apartment_id, msg, None, None, ui)
                     .await
             }
             None => (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Eigentum konnte nicht gelöscht werden.",
+                i18n::msg(ui.lang, "error.ownership_delete"),
             )
                 .into_response(),
         },
@@ -1746,20 +1881,29 @@ async fn tenancy_created(
     apartment_id: &str,
     form: TenancyForm,
     result: Result<Tenancy, sqlx::Error>,
+    ui: Ui,
 ) -> axum::response::Response {
     match result {
         Ok(_) => Redirect::to(&format!(
             "/admin/buildings/{building_id}/apartments/{apartment_id}"
         ))
         .into_response(),
-        Err(err) => match db_message(&err) {
+        Err(err) => match db_message(&err, ui) {
             Some(msg) => {
-                render_apartment_show_error(pool, building_id, apartment_id, msg, None, Some(form))
-                    .await
+                render_apartment_show_error(
+                    pool,
+                    building_id,
+                    apartment_id,
+                    msg,
+                    None,
+                    Some(form),
+                    ui,
+                )
+                .await
             }
             None => (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Mietverhältnis konnte nicht angelegt werden.",
+                i18n::msg(ui.lang, "error.tenancy_create"),
             )
                 .into_response(),
         },
@@ -1769,9 +1913,10 @@ async fn tenancy_created(
 pub async fn tenancies_create(
     Path((building_id, apartment_id)): Path<(String, String)>,
     State(pool): State<Db>,
+    ui: Ui,
     Form(form): Form<TenancyForm>,
 ) -> impl axum::response::IntoResponse {
-    if let Err(err) = load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
+    if let Err(err) = load_apartment_owned_by(&pool, &building_id, &apartment_id, ui).await {
         return err.into_response();
     }
     let end_opt = normalize_end_date(form.end_date.as_deref());
@@ -1798,7 +1943,7 @@ pub async fn tenancies_create(
                     end_opt,
                 )
                 .await;
-                return tenancy_created(&pool, &building_id, &apartment_id, form, result).await;
+                return tenancy_created(&pool, &building_id, &apartment_id, form, result, ui).await;
             }
         };
         match form.close_previous.as_deref() {
@@ -1815,6 +1960,7 @@ pub async fn tenancies_create(
                     }),
                     None,
                     Some(form),
+                    ui,
                 )
                 .await
             }
@@ -1832,7 +1978,7 @@ pub async fn tenancies_create(
                     end_opt,
                 )
                 .await;
-                return tenancy_created(&pool, &building_id, &apartment_id, form, result).await;
+                return tenancy_created(&pool, &building_id, &apartment_id, form, result, ui).await;
             }
             _ => {
                 // The user declined to end the previous tenancy the day
@@ -1841,12 +1987,14 @@ pub async fn tenancies_create(
                     &pool,
                     &building_id,
                     &apartment_id,
-                    format!(
-                        "Ohne das bisherige Mietverhältnis von {} am {} zu beenden, kann das neue Mietverhältnis nicht angelegt werden.",
-                        prev.name, prev_end
+                    i18n::msgf(
+                        ui.lang,
+                        "tenancy.decline_close",
+                        &[prev.name.as_str(), prev_end.as_str()],
                     ),
                     None,
                     Some(form),
+                    ui,
                 )
                 .await;
             }
@@ -1864,27 +2012,32 @@ pub async fn tenancies_create(
         end_opt,
     )
     .await;
-    tenancy_created(&pool, &building_id, &apartment_id, form, result).await
+    tenancy_created(&pool, &building_id, &apartment_id, form, result, ui).await
 }
 
 pub async fn tenancies_edit(
     Path((building_id, apartment_id, tenancy_id)): Path<(String, String, String)>,
     State(pool): State<Db>,
+    ui: Ui,
 ) -> impl axum::response::IntoResponse {
-    let building = match load_building(&pool, &building_id).await {
+    let building = match load_building(&pool, &building_id, ui).await {
         Ok(b) => b,
         Err(err) => return err.into_response(),
     };
-    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
+    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id, ui).await {
         Ok(a) => a,
         Err(err) => return err.into_response(),
     };
     match queries::get_tenancy(&pool, &tenancy_id).await {
         Ok(Some(tenancy)) => {
             if tenancy.apartment_id != apartment_id {
-                return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
+                return (
+                    axum::http::StatusCode::NOT_FOUND,
+                    i18n::msg(ui.lang, "common.not_found"),
+                )
+                    .into_response();
             }
-            let people = match load_people(&pool).await {
+            let people = match load_people(&pool, ui).await {
                 Ok(p) => p,
                 Err(err) => return err.into_response(),
             };
@@ -1896,19 +2049,24 @@ pub async fn tenancies_edit(
                 close_previous: None,
             };
             render(TenanciesEditTemplate {
-                title: "Mieter bearbeiten".to_string(),
+                title: i18n::msg(ui.lang, "tenancy.edit_title").to_string(),
                 building,
                 apartment,
                 tenancy,
                 error: None,
                 form,
                 people,
+                ui,
             })
         }
-        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        Ok(None) => (
+            axum::http::StatusCode::NOT_FOUND,
+            i18n::msg(ui.lang, "common.not_found"),
+        )
+            .into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Mietverhältnis konnte nicht geladen werden.",
+            i18n::msg(ui.lang, "error.tenancy_load"),
         )
             .into_response(),
     }
@@ -1923,32 +2081,35 @@ async fn render_tenancy_edit_error(
     tenancy: &Tenancy,
     error: String,
     form: TenancyForm,
+    ui: Ui,
 ) -> axum::response::Response {
-    let building = match load_building(pool, building_id).await {
+    let building = match load_building(pool, building_id, ui).await {
         Ok(b) => b,
         Err(err) => return err.into_response(),
     };
-    let people = match load_people(pool).await {
+    let people = match load_people(pool, ui).await {
         Ok(p) => p,
         Err(err) => return err.into_response(),
     };
     render_bad_request(TenanciesEditTemplate {
-        title: "Mieter bearbeiten".to_string(),
+        title: i18n::msg(ui.lang, "tenancy.edit_title").to_string(),
         building,
         apartment: apartment.clone(),
         tenancy: tenancy.clone(),
         error: Some(error),
         form,
         people,
+        ui,
     })
 }
 
 pub async fn tenancies_update(
     Path((building_id, apartment_id, tenancy_id)): Path<(String, String, String)>,
     State(pool): State<Db>,
+    ui: Ui,
     Form(form): Form<TenancyForm>,
 ) -> impl axum::response::IntoResponse {
-    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
+    let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id, ui).await {
         Ok(a) => a,
         Err(err) => return err.into_response(),
     };
@@ -1956,11 +2117,21 @@ pub async fn tenancies_update(
     let tenancy = match queries::get_tenancy(&pool, &tenancy_id).await {
         Ok(Some(existing)) => {
             if existing.apartment_id != apartment_id {
-                return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
+                return (
+                    axum::http::StatusCode::NOT_FOUND,
+                    i18n::msg(ui.lang, "common.not_found"),
+                )
+                    .into_response();
             }
             existing
         }
-        _ => return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        _ => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                i18n::msg(ui.lang, "common.not_found"),
+            )
+                .into_response()
+        }
     };
 
     let end_opt = normalize_end_date(form.end_date.as_deref());
@@ -1981,14 +2152,14 @@ pub async fn tenancies_update(
             "/admin/buildings/{building_id}/apartments/{apartment_id}"
         ))
         .into_response(),
-        Err(err) => match db_message(&err) {
+        Err(err) => match db_message(&err, ui) {
             Some(msg) => {
-                render_tenancy_edit_error(&pool, &building_id, &apartment, &tenancy, msg, form)
+                render_tenancy_edit_error(&pool, &building_id, &apartment, &tenancy, msg, form, ui)
                     .await
             }
             None => (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Mietverhältnis konnte nicht gespeichert werden.",
+                i18n::msg(ui.lang, "error.tenancy_save"),
             )
                 .into_response(),
         },
@@ -1999,17 +2170,28 @@ pub async fn tenancies_delete(
     Path((building_id, apartment_id, tenancy_id)): Path<(String, String, String)>,
     State(pool): State<Db>,
     headers: HeaderMap,
+    ui: Ui,
 ) -> impl axum::response::IntoResponse {
-    if let Err(err) = load_apartment_owned_by(&pool, &building_id, &apartment_id).await {
+    if let Err(err) = load_apartment_owned_by(&pool, &building_id, &apartment_id, ui).await {
         return err.into_response();
     }
     match queries::get_tenancy(&pool, &tenancy_id).await {
         Ok(Some(existing)) => {
             if existing.apartment_id != apartment_id {
-                return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
+                return (
+                    axum::http::StatusCode::NOT_FOUND,
+                    i18n::msg(ui.lang, "common.not_found"),
+                )
+                    .into_response();
             }
         }
-        _ => return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        _ => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                i18n::msg(ui.lang, "common.not_found"),
+            )
+                .into_response()
+        }
     }
 
     let _ = queries::delete_tenancy(&pool, &tenancy_id).await;
@@ -2029,6 +2211,7 @@ pub struct PeopleIndexTemplate {
     /// roles. The e-mail is shown only when the viewport has room for it
     /// (see the `email-if-space` CSS class).
     pub entries: Vec<PersonIndexEntry>,
+    pub ui: Ui,
 }
 
 /// One row of the people index.
@@ -2048,6 +2231,7 @@ pub struct PeopleShowTemplate {
     /// Contact form values: the person's current ones, or the submitted ones
     /// after a failed update.
     pub form: PersonForm,
+    pub ui: Ui,
 }
 
 /// Form data of the person page's contact form. Since 0009, the database
@@ -2148,50 +2332,53 @@ fn person_roles(rows: Vec<PersonRoleRow>) -> Vec<PersonRole> {
 }
 
 /// The short role label shown in the people index listing.
-fn role_label(role: &PersonRole) -> String {
+fn role_label(role: &PersonRole, ui: Ui) -> String {
     match role {
-        PersonRole::Admin { building } => format!("Ansprechpartner von {}", building.name),
-        PersonRole::BuildingOwner { building, .. } => {
-            format!("Gebäudeeigentümer von {}", building.name)
+        PersonRole::Admin { building } => {
+            i18n::msgf(ui.lang, "role.label.contact", &[building.name.as_str()])
         }
-        PersonRole::ApartmentOwner { apartment, .. } => {
-            format!(
-                "Eigentümer von {} ({})",
-                apartment.name, apartment.building_name
-            )
-        }
-        PersonRole::Tenant { apartment, .. } => {
-            format!(
-                "Mieter von {} ({})",
-                apartment.name, apartment.building_name
-            )
-        }
+        PersonRole::BuildingOwner { building, .. } => i18n::msgf(
+            ui.lang,
+            "role.label.building_owner",
+            &[building.name.as_str()],
+        ),
+        PersonRole::ApartmentOwner { apartment, .. } => i18n::msgf(
+            ui.lang,
+            "role.label.owner",
+            &[apartment.name.as_str(), apartment.building_name.as_str()],
+        ),
+        PersonRole::Tenant { apartment, .. } => i18n::msgf(
+            ui.lang,
+            "role.label.tenant",
+            &[apartment.name.as_str(), apartment.building_name.as_str()],
+        ),
     }
 }
 
 /// A compact, truncated role summary for the people index: the first two
 /// roles, then "+N weitere". The person page lists the roles in full.
-fn roles_summary(roles: &[PersonRole]) -> String {
+fn roles_summary(roles: &[PersonRole], ui: Ui) -> String {
     const MAX_SUMMARIZED: usize = 2;
-    let labels: Vec<String> = roles.iter().map(role_label).collect();
+    let labels: Vec<String> = roles.iter().map(|r| role_label(r, ui)).collect();
     if labels.len() > MAX_SUMMARIZED {
+        let extra = (labels.len() - MAX_SUMMARIZED).to_string();
         format!(
-            "{} · +{} weitere",
+            "{} {}",
             labels[..MAX_SUMMARIZED].join(" · "),
-            labels.len() - MAX_SUMMARIZED
+            i18n::msgf(ui.lang, "people.more_roles", &[&extra])
         )
     } else {
         labels.join(" · ")
     }
 }
 
-pub async fn people_index(State(pool): State<Db>) -> impl axum::response::IntoResponse {
+pub async fn people_index(State(pool): State<Db>, ui: Ui) -> impl axum::response::IntoResponse {
     let people = match queries::list_people(&pool).await {
         Ok(p) => p,
         Err(_) => {
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Personen konnten nicht geladen werden.",
+                i18n::msg(ui.lang, "error.people_load"),
             )
                 .into_response()
         }
@@ -2202,7 +2389,7 @@ pub async fn people_index(State(pool): State<Db>) -> impl axum::response::IntoRe
         Err(_) => {
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Rollen konnten nicht geladen werden.",
+                i18n::msg(ui.lang, "error.roles_load"),
             )
                 .into_response()
         }
@@ -2223,13 +2410,15 @@ pub async fn people_index(State(pool): State<Db>) -> impl axum::response::IntoRe
                     .get(&person.id)
                     .map(Vec::as_slice)
                     .unwrap_or(&[]),
+                ui,
             ),
             person,
         })
         .collect();
     render(PeopleIndexTemplate {
-        title: "Personen",
+        title: i18n::msg(ui.lang, "nav.people"),
         entries,
+        ui,
     })
 }
 
@@ -2243,14 +2432,21 @@ async fn render_person_page(
     error: Option<String>,
     form: PersonForm,
     bad_request: bool,
+    ui: Ui,
 ) -> axum::response::Response {
     let person = match queries::get_person(pool, person_id).await {
         Ok(Some(p)) => p,
-        Ok(None) => return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        Ok(None) => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                i18n::msg(ui.lang, "common.not_found"),
+            )
+                .into_response()
+        }
         Err(_) => {
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Person konnte nicht geladen werden.",
+                i18n::msg(ui.lang, "error.person_load"),
             )
                 .into_response()
         }
@@ -2260,7 +2456,7 @@ async fn render_person_page(
         Err(_) => {
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Rollen konnten nicht geladen werden.",
+                i18n::msg(ui.lang, "error.roles_load"),
             )
                 .into_response()
         }
@@ -2271,6 +2467,7 @@ async fn render_person_page(
         roles,
         error,
         form,
+        ui,
     };
     if bad_request {
         render_bad_request(template)
@@ -2282,14 +2479,21 @@ async fn render_person_page(
 pub async fn people_show(
     Path(person_id): Path<String>,
     State(pool): State<Db>,
+    ui: Ui,
 ) -> impl axum::response::IntoResponse {
     let person = match queries::get_person(&pool, &person_id).await {
         Ok(Some(p)) => p,
-        Ok(None) => return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        Ok(None) => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                i18n::msg(ui.lang, "common.not_found"),
+            )
+                .into_response()
+        }
         Err(_) => {
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Person konnte nicht geladen werden.",
+                i18n::msg(ui.lang, "error.person_load"),
             )
                 .into_response()
         }
@@ -2303,6 +2507,7 @@ pub async fn people_show(
             email: person.email.clone(),
         },
         false,
+        ui,
     )
     .await
 }
@@ -2310,17 +2515,18 @@ pub async fn people_show(
 pub async fn people_update(
     Path(person_id): Path<String>,
     State(pool): State<Db>,
+    ui: Ui,
     Form(form): Form<PersonForm>,
 ) -> impl axum::response::IntoResponse {
     // Name/e-mail format and the unique e-mail identity are enforced by the
     // database (triggers on `people`); its rejection message is shown inline.
     match queries::update_person(&pool, &person_id, &form.name, &form.email).await {
         Ok(_) => Redirect::to(&format!("/admin/people/{person_id}")).into_response(),
-        Err(err) => match db_message(&err) {
-            Some(msg) => render_person_page(&pool, &person_id, Some(msg), form, true).await,
+        Err(err) => match db_message(&err, ui) {
+            Some(msg) => render_person_page(&pool, &person_id, Some(msg), form, true, ui).await,
             None => (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Person konnte nicht gespeichert werden.",
+                i18n::msg(ui.lang, "error.person_save"),
             )
                 .into_response(),
         },
@@ -2377,6 +2583,7 @@ pub struct BuildingOwnerFormTemplate {
     pub cancel_url: String,
     /// Known owners, offered as suggestions on the name/e-mail fields.
     pub people: Vec<Person>,
+    pub ui: Ui,
 }
 
 /// One of the possible notices shown above the building-owner form: either a
@@ -2390,6 +2597,7 @@ enum BuildingOwnerFormNotice {
     EndDateWarning(EndDateWarning),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn building_owner_form_template(
     title: String,
     building: Building,
@@ -2398,6 +2606,7 @@ fn building_owner_form_template(
     building_id: &str,
     owner_id: Option<&str>,
     people: Vec<Person>,
+    ui: Ui,
 ) -> BuildingOwnerFormTemplate {
     let (error, confirmation, end_warning) = match notice {
         None => (None, None, None),
@@ -2412,9 +2621,9 @@ fn building_owner_form_template(
         None => format!("/admin/buildings/{building_id}/building_owners"),
     };
     let submit_label = if owner_id.is_some() {
-        "Änderungen speichern".to_string()
+        i18n::msg(ui.lang, "common.save_changes").to_string()
     } else {
-        "Eigentümer hinzufügen".to_string()
+        i18n::msg(ui.lang, "owners.add").to_string()
     };
     BuildingOwnerFormTemplate {
         title,
@@ -2427,23 +2636,25 @@ fn building_owner_form_template(
         action,
         submit_label,
         people,
+        ui,
     }
 }
 
 pub async fn building_owners_new(
     Path(building_id): Path<String>,
     State(pool): State<Db>,
+    ui: Ui,
 ) -> impl axum::response::IntoResponse {
-    let building = match load_building(&pool, &building_id).await {
+    let building = match load_building(&pool, &building_id, ui).await {
         Ok(b) => b,
         Err(err) => return err.into_response(),
     };
-    let people = match load_people(&pool).await {
+    let people = match load_people(&pool, ui).await {
         Ok(p) => p,
         Err(err) => return err.into_response(),
     };
     render(building_owner_form_template(
-        "Gebäudeeigentümer hinzufügen".to_string(),
+        i18n::msg(ui.lang, "building_owner.new_title").to_string(),
         building,
         None,
         BuildingOwnerForm {
@@ -2457,6 +2668,7 @@ pub async fn building_owners_new(
         &building_id,
         None,
         people,
+        ui,
     ))
 }
 
@@ -2467,32 +2679,34 @@ async fn building_owner_created(
     building_id: &str,
     form: BuildingOwnerForm,
     result: Result<BuildingOwner, sqlx::Error>,
+    ui: Ui,
 ) -> axum::response::Response {
     match result {
         Ok(_) => Redirect::to(&format!("/admin/buildings/{building_id}")).into_response(),
-        Err(err) => match db_message(&err) {
+        Err(err) => match db_message(&err, ui) {
             Some(msg) => {
-                let building = match load_building(pool, building_id).await {
+                let building = match load_building(pool, building_id, ui).await {
                     Ok(b) => b,
                     Err(err) => return err.into_response(),
                 };
-                let people = match load_people(pool).await {
+                let people = match load_people(pool, ui).await {
                     Ok(p) => p,
                     Err(err) => return err.into_response(),
                 };
                 render_bad_request(building_owner_form_template(
-                    "Gebäudeeigentümer hinzufügen".to_string(),
+                    i18n::msg(ui.lang, "building_owner.new_title").to_string(),
                     building,
                     Some(BuildingOwnerFormNotice::Error(msg)),
                     form,
                     building_id,
                     None,
                     people,
+                    ui,
                 ))
             }
             None => (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Gebäudeeigentümer konnte nicht angelegt werden.",
+                i18n::msg(ui.lang, "error.building_owner_create"),
             )
                 .into_response(),
         },
@@ -2502,9 +2716,10 @@ async fn building_owner_created(
 pub async fn building_owners_create(
     Path(building_id): Path<String>,
     State(pool): State<Db>,
+    ui: Ui,
     Form(form): Form<BuildingOwnerForm>,
 ) -> impl axum::response::IntoResponse {
-    if let Err(err) = load_building(&pool, &building_id).await {
+    if let Err(err) = load_building(&pool, &building_id, ui).await {
         return err.into_response();
     }
     let end_opt = normalize_end_date(form.end_date.as_deref());
@@ -2532,22 +2747,22 @@ pub async fn building_owners_create(
                     end_opt,
                 )
                 .await;
-                return building_owner_created(&pool, &building_id, form, result).await;
+                return building_owner_created(&pool, &building_id, form, result, ui).await;
             }
         };
         match form.close_previous.as_deref() {
             None => {
-                let building = match load_building(&pool, &building_id).await {
+                let building = match load_building(&pool, &building_id, ui).await {
                     Ok(b) => b,
                     Err(err) => return err.into_response(),
                 };
-                let people = match load_people(&pool).await {
+                let people = match load_people(&pool, ui).await {
                     Ok(p) => p,
                     Err(err) => return err.into_response(),
                 };
                 let new_start = form.start_date.clone();
                 return render(building_owner_form_template(
-                    "Gebäudeeigentümer hinzufügen".to_string(),
+                    i18n::msg(ui.lang, "building_owner.new_title").to_string(),
                     building,
                     Some(BuildingOwnerFormNotice::Confirmation(
                         BuildingOwnerConfirmation {
@@ -2560,6 +2775,7 @@ pub async fn building_owners_create(
                     &building_id,
                     None,
                     people,
+                    ui,
                 ));
             }
             Some("yes") => {
@@ -2576,30 +2792,32 @@ pub async fn building_owners_create(
                     end_opt,
                 )
                 .await;
-                return building_owner_created(&pool, &building_id, form, result).await;
+                return building_owner_created(&pool, &building_id, form, result, ui).await;
             }
             _ => {
                 // The user declined to end the previous building owner the day
                 // before; the operation cannot succeed, so tell them.
-                let building = match load_building(&pool, &building_id).await {
+                let building = match load_building(&pool, &building_id, ui).await {
                     Ok(b) => b,
                     Err(err) => return err.into_response(),
                 };
-                let people = match load_people(&pool).await {
+                let people = match load_people(&pool, ui).await {
                     Ok(p) => p,
                     Err(err) => return err.into_response(),
                 };
                 return render_bad_request(building_owner_form_template(
-                    "Gebäudeeigentümer hinzufügen".to_string(),
+                    i18n::msg(ui.lang, "building_owner.new_title").to_string(),
                     building,
-                    Some(BuildingOwnerFormNotice::Error(format!(
-                        "Ohne das bisherige Gebäudeeigentum von {} am {} zu beenden, kann der neue Gebäudeeigentümer nicht angelegt werden.",
-                        prev.name, prev_end
+                    Some(BuildingOwnerFormNotice::Error(i18n::msgf(
+                        ui.lang,
+                        "building_owner.decline_close",
+                        &[prev.name.as_str(), prev_end.as_str()],
                     ))),
                     form,
                     &building_id,
                     None,
                     people,
+                    ui,
                 ));
             }
         }
@@ -2617,25 +2835,27 @@ pub async fn building_owners_create(
     {
         if let Some(next) = next_day(&prev_end) {
             if next != form.start_date {
-                let building = match load_building(&pool, &building_id).await {
+                let building = match load_building(&pool, &building_id, ui).await {
                     Ok(b) => b,
                     Err(err) => return err.into_response(),
                 };
-                let people = match load_people(&pool).await {
+                let people = match load_people(&pool, ui).await {
                     Ok(p) => p,
                     Err(err) => return err.into_response(),
                 };
                 return render_bad_request(building_owner_form_template(
-                    "Gebäudeeigentümer hinzufügen".to_string(),
+                    i18n::msg(ui.lang, "building_owner.new_title").to_string(),
                     building,
-                    Some(BuildingOwnerFormNotice::Error(format!(
-                        "Das Gebäudeeigentum muss am Tag nach dem Ende des vorherigen Gebäudeeigentums beginnen; das vorherige Gebäudeeigentum endet am {prev_end}, der neue Beginn muss am {next} liegen (nicht am {}).",
-                        form.start_date
+                    Some(BuildingOwnerFormNotice::Error(i18n::msgf(
+                        ui.lang,
+                        "building_owner.gap_dates",
+                        &[prev_end.as_str(), next.as_str(), form.start_date.as_str()],
                     ))),
                     form,
                     &building_id,
                     None,
                     people,
+                    ui,
                 ));
             }
         }
@@ -2652,23 +2872,28 @@ pub async fn building_owners_create(
         end_opt,
     )
     .await;
-    building_owner_created(&pool, &building_id, form, result).await
+    building_owner_created(&pool, &building_id, form, result, ui).await
 }
 
 pub async fn building_owners_edit(
     Path((building_id, owner_id)): Path<(String, String)>,
     State(pool): State<Db>,
+    ui: Ui,
 ) -> impl axum::response::IntoResponse {
-    let building = match load_building(&pool, &building_id).await {
+    let building = match load_building(&pool, &building_id, ui).await {
         Ok(b) => b,
         Err(err) => return err.into_response(),
     };
     match queries::get_building_owner(&pool, &owner_id).await {
         Ok(Some(owner)) => {
             if owner.building_id != building_id {
-                return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
+                return (
+                    axum::http::StatusCode::NOT_FOUND,
+                    i18n::msg(ui.lang, "common.not_found"),
+                )
+                    .into_response();
             }
-            let people = match load_people(&pool).await {
+            let people = match load_people(&pool, ui).await {
                 Ok(p) => p,
                 Err(err) => return err.into_response(),
             };
@@ -2681,19 +2906,24 @@ pub async fn building_owners_edit(
                 confirm_end: None,
             };
             render(building_owner_form_template(
-                "Gebäudeeigentümer bearbeiten".to_string(),
+                i18n::msg(ui.lang, "building_owner.edit_title").to_string(),
                 building,
                 None,
                 form,
                 &building_id,
                 Some(&owner_id),
                 people,
+                ui,
             ))
         }
-        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        Ok(None) => (
+            axum::http::StatusCode::NOT_FOUND,
+            i18n::msg(ui.lang, "common.not_found"),
+        )
+            .into_response(),
         Err(_) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Gebäudeeigentümer konnte nicht geladen werden.",
+            i18n::msg(ui.lang, "error.building_owner_load"),
         )
             .into_response(),
     }
@@ -2730,20 +2960,31 @@ async fn building_owner_end_date_warning(
 pub async fn building_owners_update(
     Path((building_id, owner_id)): Path<(String, String)>,
     State(pool): State<Db>,
+    ui: Ui,
     Form(form): Form<BuildingOwnerForm>,
 ) -> impl axum::response::IntoResponse {
-    if let Err(err) = load_building(&pool, &building_id).await {
+    if let Err(err) = load_building(&pool, &building_id, ui).await {
         return err.into_response();
     }
     // Ensure the building owner belongs to this building.
     let existing = match queries::get_building_owner(&pool, &owner_id).await {
         Ok(Some(existing)) => {
             if existing.building_id != building_id {
-                return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
+                return (
+                    axum::http::StatusCode::NOT_FOUND,
+                    i18n::msg(ui.lang, "common.not_found"),
+                )
+                    .into_response();
             }
             existing
         }
-        _ => return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        _ => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                i18n::msg(ui.lang, "common.not_found"),
+            )
+                .into_response()
+        }
     };
     let end_opt = normalize_end_date(form.end_date.as_deref());
 
@@ -2754,22 +2995,23 @@ pub async fn building_owners_update(
     {
         match form.confirm_end.as_deref() {
             None => {
-                let building = match load_building(&pool, &building_id).await {
+                let building = match load_building(&pool, &building_id, ui).await {
                     Ok(b) => b,
                     Err(err) => return err.into_response(),
                 };
-                let people = match load_people(&pool).await {
+                let people = match load_people(&pool, ui).await {
                     Ok(p) => p,
                     Err(err) => return err.into_response(),
                 };
                 return render(building_owner_form_template(
-                    "Gebäudeeigentümer bearbeiten".to_string(),
+                    i18n::msg(ui.lang, "building_owner.edit_title").to_string(),
                     building,
                     Some(BuildingOwnerFormNotice::EndDateWarning(warning)),
                     form,
                     &building_id,
                     Some(&owner_id),
                     people,
+                    ui,
                 ));
             }
             Some("no") => {
@@ -2795,29 +3037,30 @@ pub async fn building_owners_update(
     .await
     {
         Ok(_) => Redirect::to(&format!("/admin/buildings/{building_id}")).into_response(),
-        Err(err) => match db_message(&err) {
+        Err(err) => match db_message(&err, ui) {
             Some(msg) => {
-                let building = match load_building(&pool, &building_id).await {
+                let building = match load_building(&pool, &building_id, ui).await {
                     Ok(b) => b,
                     Err(err) => return err.into_response(),
                 };
-                let people = match load_people(&pool).await {
+                let people = match load_people(&pool, ui).await {
                     Ok(p) => p,
                     Err(err) => return err.into_response(),
                 };
                 render_bad_request(building_owner_form_template(
-                    "Gebäudeeigentümer bearbeiten".to_string(),
+                    i18n::msg(ui.lang, "building_owner.edit_title").to_string(),
                     building,
                     Some(BuildingOwnerFormNotice::Error(msg)),
                     form,
                     &building_id,
                     Some(&owner_id),
                     people,
+                    ui,
                 ))
             }
             None => (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Gebäudeeigentümer konnte nicht gespeichert werden.",
+                i18n::msg(ui.lang, "error.building_owner_save"),
             )
                 .into_response(),
         },
@@ -2828,17 +3071,28 @@ pub async fn building_owners_delete(
     Path((building_id, owner_id)): Path<(String, String)>,
     State(pool): State<Db>,
     headers: HeaderMap,
+    ui: Ui,
 ) -> impl axum::response::IntoResponse {
-    if let Err(err) = load_building(&pool, &building_id).await {
+    if let Err(err) = load_building(&pool, &building_id, ui).await {
         return err.into_response();
     }
     match queries::get_building_owner(&pool, &owner_id).await {
         Ok(Some(existing)) => {
             if existing.building_id != building_id {
-                return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response();
+                return (
+                    axum::http::StatusCode::NOT_FOUND,
+                    i18n::msg(ui.lang, "common.not_found"),
+                )
+                    .into_response();
             }
         }
-        _ => return (axum::http::StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        _ => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                i18n::msg(ui.lang, "common.not_found"),
+            )
+                .into_response()
+        }
     }
 
     // The database rejects deleting a period in the middle of the chain or
@@ -2847,15 +3101,15 @@ pub async fn building_owners_delete(
     // shown inline on the building page.
     match queries::delete_building_owner(&pool, &owner_id).await {
         Ok(_) => redirect_after_post(&headers, &format!("/admin/buildings/{building_id}")),
-        Err(err) => match db_message(&err) {
+        Err(err) => match db_message(&err, ui) {
             Some(msg) => (
                 axum::http::StatusCode::BAD_REQUEST,
-                render_building_page(&pool, &building_id, Some(msg)).await,
+                render_building_page(&pool, &building_id, Some(msg), ui).await,
             )
                 .into_response(),
             None => (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Gebäudeeigentümer konnte nicht gelöscht werden.",
+                i18n::msg(ui.lang, "error.building_owner_delete"),
             )
                 .into_response(),
         },

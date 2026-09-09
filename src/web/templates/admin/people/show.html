@@ -4,7 +4,7 @@
 
 {% block content %}
 <nav class="breadcrumb">
-  <a href="/admin">Gebäude</a><span class="sep">/</span><a href="/admin/people">Personen</a><span class="sep">/</span><span>{{ person.name }}</span>
+  <a href="/admin">{{ ui.t("nav.buildings") }}</a><span class="sep">/</span><a href="/admin/people">{{ ui.t("nav.people") }}</a><span class="sep">/</span><span>{{ person.name }}</span>
 </nav>
 
 <div class="page-header">
@@ -15,7 +15,7 @@
 </div>
 
 <section class="card">
-  <h2>Kontaktdaten</h2>
+  <h2>{{ ui.t("person.contact_heading") }}</h2>
   {% include "admin/_error.html" %}
   <form method="post" action="/admin/people/{{ person.id }}">
     <label class="field">
@@ -23,36 +23,36 @@
       <input type="text" name="name" value="{{ form.name }}" required />
     </label>
     <label class="field">
-      E-Mail
+      {{ ui.t("form.email") }}
       <input type="email" name="email" value="{{ form.email }}" required />
     </label>
     <div class="form-actions">
-      <button type="submit" class="btn btn-primary">Änderungen speichern</button>
+      <button type="submit" class="btn btn-primary">{{ ui.t("common.save_changes") }}</button>
     </div>
-    <p class="muted">Die E-Mail-Adresse ist die Identität der Person: Name und Adresse gelten überall dort, wo die Person geführt wird – Eigentum, Mietverhältnisse, Ansprechpartner. Eine Adresse, die bereits einer anderen Person gehört, wird abgelehnt.</p>
+    <p class="muted">{{ ui.t("person.email_help") }}</p>
   </form>
 </section>
 
 <section class="card">
-  <h2>Rollen</h2>
+  <h2>{{ ui.t("person.roles_heading") }}</h2>
   {% if roles.len() == 0 %}
-  <p class="muted">Keine Rollen erfasst.</p>
+  <p class="muted">{{ ui.t("person.no_roles") }}</p>
   {% else %}
   <ul class="person-list">
   {% for role in roles %}
     <li>
     {% match role %}
       {% when PersonRole::Admin { building } %}
-        Ansprechpartner von <a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a>
+        {{ ui.t("role.contact") }} <a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a>
       {% when PersonRole::BuildingOwner { building, start_date, end_date } %}
-        Gebäudeeigentümer von <a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a>
-        ({% if let Some(ed) = end_date %}von {{ start_date }} bis {{ ed }}{% else %}seit {{ start_date }}{% endif %})
+        {{ ui.t("role.building_owner") }} <a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a>
+        ({% if let Some(ed) = end_date %}{{ ui.t2("role.range", &start_date, &ed) }}{% else %}{{ ui.t1("role.since", &start_date) }}{% endif %})
       {% when PersonRole::ApartmentOwner { apartment, start_date, end_date } %}
-        Eigentümer von <a href="/admin/buildings/{{ apartment.building_id }}/apartments/{{ apartment.id }}">{{ apartment.name }}</a>
-        ({{ apartment.building_name }}{% if let Some(ed) = end_date %}; von {{ start_date }} bis {{ ed }}{% else %}; seit {{ start_date }}{% endif %})
+        {{ ui.t("role.owner") }} <a href="/admin/buildings/{{ apartment.building_id }}/apartments/{{ apartment.id }}">{{ apartment.name }}</a>
+        ({{ apartment.building_name }}{% if let Some(ed) = end_date %}{{ ui.t2("role.range_in", &start_date, &ed) }}{% else %}{{ ui.t1("role.since_in", &start_date) }}{% endif %})
       {% when PersonRole::Tenant { apartment, start_date, end_date } %}
-        Mieter von <a href="/admin/buildings/{{ apartment.building_id }}/apartments/{{ apartment.id }}">{{ apartment.name }}</a>
-        ({{ apartment.building_name }}{% if let Some(ed) = end_date %}; von {{ start_date }} bis {{ ed }}{% else %}; seit {{ start_date }}{% endif %})
+        {{ ui.t("role.tenant") }} <a href="/admin/buildings/{{ apartment.building_id }}/apartments/{{ apartment.id }}">{{ apartment.name }}</a>
+        ({{ apartment.building_name }}{% if let Some(ed) = end_date %}{{ ui.t2("role.range_in", &start_date, &ed) }}{% else %}{{ ui.t1("role.since_in", &start_date) }}{% endif %})
     {% endmatch %}
     </li>
   {% endfor %}

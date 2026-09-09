@@ -15,6 +15,7 @@ use tokio::{
 };
 
 use crate::db::{queries, Db};
+use crate::i18n::{self, Lang, Ui};
 use crate::scheduler::{self, WeekAssignment};
 
 const KEHRKRAFT_SVG: &[u8] = include_bytes!("../../kehrkraft.svg");
@@ -31,8 +32,13 @@ pub(crate) fn sanitize_filename(s: &str) -> String {
 }
 
 /// Typst source for one column of the schedule table. `info` is true for rows
-/// that are not part of `year` (shown greyed out; see the template).
-fn rows_source(year: i32, rows: &[&WeekAssignment]) -> String {
+/// that are not part of `year` (shown greyed out; see the template). Dates
+/// use the UI language's format (German 2-digit year, English ISO).
+fn rows_source(year: i32, rows: &[&WeekAssignment], ui: Ui) -> String {
+    let fmt = match ui.lang {
+        Lang::De => "%d.%m.%y",
+        Lang::En => "%Y-%m-%d",
+    };
     let parts: Vec<String> = rows
         .iter()
         .map(|w| {
@@ -40,8 +46,8 @@ fn rows_source(year: i32, rows: &[&WeekAssignment]) -> String {
             format!(
                 "(week: {}, start: \"{}\", end: \"{}\", name: \"{}\", info: {})",
                 w.iso_week,
-                w.start.format("%d.%m.%y"),
-                w.end.format("%d.%m.%y"),
+                w.start.format(fmt),
+                w.end.format(fmt),
                 name,
                 w.year != year
             )
@@ -108,6 +114,7 @@ pub async fn public_pdf(
     Path(secret_slug): Path<String>,
     State(pool): State<Db>,
     State(public_url): State<Option<String>>,
+    ui: Ui,
 ) -> impl IntoResponse {
     // Lookup building by secret slug
     let building = match queries::get_building_by_slug(&pool, &secret_slug).await {
@@ -216,10 +223,17 @@ pub async fn public_pdf(
 
     // Build wrapper Typst source
     let building_name_escaped = escape_typst_str(&building.name);
-    let left_rows_src = rows_source(year, &left_rows);
-    let right_rows_src = rows_source(year, &right_rows);
+    let left_rows_src = rows_source(year, &left_rows, ui);
+    let right_rows_src = rows_source(year, &right_rows, ui);
     // Version of the running binary, baked in at compile time from Cargo.toml
     let version = env!("CARGO_PKG_VERSION");
+    let footer_created = i18n::msgf(ui.lang, "pdf.footer_created", &[version]);
+    let updated = Local::now().format(i18n::date_format(ui.lang)).to_string();
+    let footer_as_of = i18n::msgf(ui.lang, "pdf.footer_as_of", &[&updated]);
+    let col_from = i18n::msg(ui.lang, "pdf.col_from");
+    let col_to = i18n::msg(ui.lang, "pdf.col_to");
+    let qr_pdf = i18n::msg(ui.lang, "pdf.qr_pdf");
+    let qr_ical = i18n::msg(ui.lang, "pdf.qr_ical");
     let wrapper_src = format!(
         r#"#import "kehrwoche.typ": kehrwoche
 
@@ -230,10 +244,10 @@ pub async fn public_pdf(
     #set text(8pt)
     #columns(2)[
       #set align(left)
-      Erstellt mit Kehrkraft v{version}
+      {footer_created}
       #colbreak()
       #set align(right)
-      Stand: #datetime.today().display("[day].[month].[year]")
+      {footer_as_of}
     ]
   ]
 )
@@ -244,6 +258,10 @@ pub async fn public_pdf(
 #let right_rows = {right_rows}
 #let pdf_url = "{pdf_url}"
 #let ical_url = "{ical_url}"
+#let col_from = "{col_from}"
+#let col_to = "{col_to}"
+#let qr_pdf_caption = "{qr_pdf}"
+#let qr_ical_caption = "{qr_ical}"
 
 #kehrwoche(
   building_name: building_name,
@@ -252,6 +270,10 @@ pub async fn public_pdf(
   right_rows: right_rows,
   pdf_url: pdf_url,
   ical_url: ical_url,
+  col_from: col_from,
+  col_to: col_to,
+  qr_pdf_caption: qr_pdf_caption,
+  qr_ical_caption: qr_ical_caption,
 )
 "#,
         building_name = building_name_escaped,
@@ -260,7 +282,12 @@ pub async fn public_pdf(
         right_rows = right_rows_src,
         pdf_url = pdf_url,
         ical_url = ical_url,
-        version = version,
+        col_from = col_from,
+        col_to = col_to,
+        qr_pdf = qr_pdf,
+        qr_ical = qr_ical,
+        footer_created = footer_created,
+        footer_as_of = footer_as_of,
     );
 
     if fs::write(tmp_dir.join("wrapper.typ"), wrapper_src.as_bytes())
@@ -444,11 +471,22 @@ mod tests {
 
     #[test]
     fn rows_source_marks_cross_year_rows_as_informational() {
+        let ui = Ui::for_lang(Lang::De);
         let normal = week(2026, 5);
         let grey = week(2027, 1);
-        let src = rows_source(2026, &[&normal, &grey]);
+        let src = rows_source(2026, &[&normal, &grey], ui);
         assert!(src.contains("week: 5") && src.contains("info: false"));
         assert!(src.contains("week: 1") && src.contains("info: true"));
+    }
+
+    #[test]
+    fn rows_source_formats_dates_per_language() {
+        // ISO week 5 of 2026 starts Monday 2026-01-26.
+        let w = week(2026, 5);
+        let de = rows_source(2026, &[&w], Ui::for_lang(Lang::De));
+        let en = rows_source(2026, &[&w], Ui::for_lang(Lang::En));
+        assert!(de.contains("26.01.26"), "{de}");
+        assert!(en.contains("2026-01-26"), "{en}");
     }
 
     #[test]

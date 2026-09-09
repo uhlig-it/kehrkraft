@@ -4,6 +4,7 @@
 //! serve the same app as the binary.
 
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -11,16 +12,17 @@ use tokio::sync::Mutex;
 
 use axum::body::Body;
 use axum::extract::State;
-use axum::extract::{FromRef, Path};
+use axum::extract::{FromRef, FromRequestParts, Path};
 use axum::http::header;
-use axum::http::{HeaderValue, Request, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
 use axum::middleware::{self, Next};
-use axum::response::{IntoResponse, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::Router;
 use base64::Engine as _;
 
 use crate::db::Db;
+use crate::i18n::{self, cookie_value, Lang, Ui};
 use crate::web::{admin, ical, pdf};
 
 /// Shared application state handed to handlers via [`axum::extract::State`].
@@ -41,6 +43,29 @@ impl FromRef<AppState> for Db {
 impl FromRef<AppState> for Option<String> {
     fn from_ref(state: &AppState) -> Option<String> {
         state.public_url.clone()
+    }
+}
+
+/// Per-request UI language: an explicit `lang` cookie wins over the browser's
+/// `Accept-Language`, German is the fallback. Every page handler requests a
+/// `Ui` and passes it to its templates.
+impl FromRequestParts<AppState> for Ui {
+    type Rejection = Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &AppState,
+    ) -> Result<Self, Infallible> {
+        let cookie = parts
+            .headers
+            .get(header::COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|c| cookie_value(c, i18n::COOKIE_NAME));
+        let accept = parts
+            .headers
+            .get(header::ACCEPT_LANGUAGE)
+            .and_then(|v| v.to_str().ok());
+        Ok(Ui::for_lang(i18n::negotiate(cookie, accept)))
     }
 }
 
@@ -100,14 +125,20 @@ async fn sortable_js() -> impl IntoResponse {
 
 /// Bundled Barlow webfonts (OFL), embedded like the other static assets so the
 /// app stays self-contained and works offline.
-async fn font(Path(name): Path<String>) -> Response {
+async fn font(Path(name): Path<String>, ui: Ui) -> Response {
     let (bytes, content_type): (&[u8], &'static str) = match name.as_str() {
         "barlow-400.woff2" => (BARLOW_400, "font/woff2"),
         "barlow-500.woff2" => (BARLOW_500, "font/woff2"),
         "barlow-600.woff2" => (BARLOW_600, "font/woff2"),
         "barlow-700.woff2" => (BARLOW_700, "font/woff2"),
         "barlow-condensed-600.woff2" => (BARLOW_CONDENSED_600, "font/woff2"),
-        _ => return (StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+        _ => {
+            return (
+                StatusCode::NOT_FOUND,
+                i18n::msg(ui.lang, "common.not_found"),
+            )
+                .into_response()
+        }
     };
     (
         [
@@ -120,6 +151,54 @@ async fn font(Path(name): Path<String>) -> Response {
 }
 
 /// Basic Auth gate for the admin area; returns 401 + WWW-Authenticate on failure.
+async fn language_switch(Path(lang): Path<String>, headers: HeaderMap) -> Response {
+    let Some(lang) = Lang::from_code(&lang) else {
+        return (StatusCode::NOT_FOUND, "Unknown language").into_response();
+    };
+    let cookie = format!(
+        "{name}={value}; Path=/; Max-Age={max_age}; SameSite=Lax; HttpOnly",
+        name = i18n::COOKIE_NAME,
+        value = lang.code(),
+        max_age = i18n::COOKIE_MAX_AGE,
+    );
+    let mut res = Redirect::to(&language_redirect_target(&headers)).into_response();
+    if let Ok(value) = HeaderValue::from_str(&cookie) {
+        res.headers_mut().insert(header::SET_COOKIE, value);
+    }
+    res
+}
+
+/// The page to return to after a language switch: the `Referer`'s path when it
+/// is a safe, same-site path, otherwise the admin home.
+fn language_redirect_target(headers: &HeaderMap) -> String {
+    let fallback = "/admin";
+    let Some(raw) = headers.get(header::REFERER).and_then(|v| v.to_str().ok()) else {
+        return fallback.into();
+    };
+    let path = if let Some(rest) = raw
+        .strip_prefix("http://")
+        .or_else(|| raw.strip_prefix("https://"))
+    {
+        match rest.find('/') {
+            Some(i) => &rest[i..],
+            None => "/",
+        }
+    } else if raw.starts_with('/') {
+        raw
+    } else {
+        return fallback.into();
+    };
+    if path.starts_with("//")
+        || path.contains('\\')
+        || path.contains('\r')
+        || path.contains('\n')
+        || path.contains(' ')
+    {
+        fallback.into()
+    } else {
+        path.into()
+    }
+}
 async fn require_basic_auth(
     State((expected_user, expected_pass)): State<(String, String)>,
     req: Request<Body>,
@@ -222,21 +301,28 @@ async fn rate_limit(req: Request<Body>, next: Next) -> Response {
     next.run(req).await
 }
 
-/// Markup injected at the top of every full HTML page in demo mode.
-const DEMO_BANNER_HTML: &[u8] = b"<div class=\"demo-banner\">Demo-Modus</div>";
+/// Markup injected at the top of every full HTML page in demo mode, in the
+/// request's UI language.
+fn demo_banner_html(lang: Lang) -> Vec<u8> {
+    format!(
+        "<div class=\"demo-banner\">{}</div>",
+        i18n::msg(lang, "demo.banner")
+    )
+    .into_bytes()
+}
 
-/// Inserts [DEMO_BANNER_HTML] right after the opening `<body>` tag, or returns
+/// Inserts `banner` right after the opening `<body>` tag, or returns
 /// the body unchanged if no `<body>` tag is present.
-fn insert_demo_banner(body: &[u8]) -> Vec<u8> {
+fn insert_demo_banner(body: &[u8], banner: &[u8]) -> Vec<u8> {
     let body_tag = b"<body";
     let mut i = 0;
     while i + body_tag.len() <= body.len() {
         if &body[i..i + body_tag.len()] == body_tag {
             if let Some(rel) = body[i..].iter().position(|&b| b == b'>') {
                 let insert_at = i + rel + 1;
-                let mut out = Vec::with_capacity(body.len() + DEMO_BANNER_HTML.len());
+                let mut out = Vec::with_capacity(body.len() + banner.len());
                 out.extend_from_slice(&body[..insert_at]);
-                out.extend_from_slice(DEMO_BANNER_HTML);
+                out.extend_from_slice(banner);
                 out.extend_from_slice(&body[insert_at..]);
                 return out;
             }
@@ -254,6 +340,20 @@ fn insert_demo_banner(body: &[u8]) -> Vec<u8> {
 /// pass through untouched. Runs at route level, i.e. inside the compression
 /// layer, so the body can be rewritten before compression.
 async fn demo_banner(req: Request<Body>, next: Next) -> Response {
+    // Read the language preference before the request is moved into the
+    // inner handler.
+    let cookie = req
+        .headers()
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|c| cookie_value(c, i18n::COOKIE_NAME));
+    let accept = req
+        .headers()
+        .get(header::ACCEPT_LANGUAGE)
+        .and_then(|v| v.to_str().ok());
+    let lang = i18n::negotiate(cookie, accept);
+    let banner = demo_banner_html(lang);
+
     let res = next.run(req).await;
     let is_html = res
         .headers()
@@ -275,7 +375,7 @@ async fn demo_banner(req: Request<Body>, next: Next) -> Response {
         )
             .into_response();
     };
-    let out = insert_demo_banner(&bytes);
+    let out = insert_demo_banner(&bytes, &banner);
     if out.len() == bytes.len() {
         return Response::from_parts(parts, Body::from(out));
     }
@@ -409,7 +509,8 @@ pub fn build_router(
         .route(
             "/admin/buildings/{id}/building_owners/{owner_id}/delete",
             axum::routing::post(admin::building_owners_delete),
-        );
+        )
+        .route("/language/{lang}", get(language_switch));
 
     let public_router = Router::new()
         .route("/p/{secret_slug}/kehrwoche.pdf", get(pdf::public_pdf))

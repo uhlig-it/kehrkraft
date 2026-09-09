@@ -34,7 +34,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 regex = "1"
 # Same reqwest major as the regular dependency to avoid duplicate rlib candidates
 # in test targets; rustls-no-provider keeps the ring-based TLS setup of the lib.
-reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "form", "json"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "form", "json", "cookies"] }
 
 [[test]]
 name = "unit_building_crud"

@@ -4,29 +4,29 @@
 
 {% block content %}
 <nav class="breadcrumb">
-  <a href="/admin">Gebäude</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">{{ apartment.name }}</a><span class="sep">/</span><span>Bearbeiten</span>
+  <a href="/admin">{{ ui.t("nav.buildings") }}</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">{{ apartment.name }}</a><span class="sep">/</span><span>{{ ui.t("common.edit") }}</span>
 </nav>
 
 <div class="page-header">
-  <h1>Wohnung bearbeiten</h1>
+  <h1>{{ ui.t("apartments.edit_title") }}</h1>
 </div>
 
 <div class="card">
   {% include "admin/_error.html" %}
   <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/update">
     <label class="field">
-      Name <span class="hint">(max. 30 Zeichen)</span>
+      Name <span class="hint">{{ ui.t("form.name_max") }}</span>
       <input type="text" name="name" value="{{ name }}" maxlength="30" required />
     </label>
 
     <label class="field">
-      Beschreibung <span class="hint">(optional)</span>
+      {{ ui.t("form.description") }} <span class="hint">{{ ui.t("form.optional") }}</span>
       <input type="text" name="description" value="{{ description }}" />
     </label>
 
     <div class="form-actions">
-      <button type="submit" class="btn btn-primary">Wohnung speichern</button>
-      <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">Abbrechen</a>
+      <button type="submit" class="btn btn-primary">{{ ui.t("apartments.save") }}</button>
+      <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">{{ ui.t("common.cancel") }}</a>
     </div>
   </form>
 </div>

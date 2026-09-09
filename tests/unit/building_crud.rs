@@ -123,9 +123,9 @@ async fn building_crud_works() {
     assert!(
         partial
             .as_database_error()
-            .map(|e| e.message().contains("E-Mail-Adresse"))
+            .map(|e| e.message().contains("ERR_EMAIL_DOT"))
             .unwrap_or(false),
-        "expected an e-mail validation message, got {partial:?}"
+        "expected an e-mail validation code, got {partial:?}"
     );
     let buildings_after_partial = queries::list_buildings(&pool)
         .await

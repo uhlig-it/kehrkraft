@@ -4,12 +4,12 @@
 
 {% block content %}
 <nav class="breadcrumb">
-  <a href="/admin">Gebäude</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><span>Jahresplan</span>
+  <a href="/admin">{{ ui.t("nav.buildings") }}</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><span>{{ ui.t("schedule.title") }}</span>
 </nav>
 
 <div class="page-header">
   <div>
-    <h1>Jahresplan</h1>
+    <h1>{{ ui.t("schedule.title") }}</h1>
     <p class="subtitle">{{ building.name }}</p>
   </div>
   <div class="year-hero" aria-hidden="true">{{ year }}</div>
@@ -17,19 +17,19 @@
 
 <section class="card">
   <div class="card-header">
-    <h2>Bewohner-Links</h2>
+    <h2>{{ ui.t("schedule.resident_links") }}</h2>
     <div class="card-header-actions">
-      <a class="btn btn-secondary" href="/p/{{ building.secret_slug }}/kehrwoche.pdf" target="_blank" rel="noopener">Plan als öffentliches PDF</a>
-      <a class="btn btn-secondary" href="/p/{{ building.secret_slug }}/kehrwoche.ics">öffentlicher iCal-Feed</a>
+      <a class="btn btn-secondary" href="/p/{{ building.secret_slug }}/kehrwoche.pdf" target="_blank" rel="noopener">{{ ui.t("buildings.public_pdf") }}</a>
+      <a class="btn btn-secondary" href="/p/{{ building.secret_slug }}/kehrwoche.ics">{{ ui.t("buildings.public_ical") }}</a>
     </div>
   </div>
 
   <table class="table table-compact">
     <thead>
       <tr>
-        <th>KW</th>
-        <th>von</th>
-        <th>bis</th>
+        <th>{{ ui.t("schedule.week") }}</th>
+        <th>{{ ui.t("schedule.from") }}</th>
+        <th>{{ ui.t("schedule.to") }}</th>
         <th>Name</th>
       </tr>
     </thead>
@@ -42,8 +42,8 @@
         <td>
           {% match w.assignee_name %}
             {% when Some with (n) %}
-              {{ n }}{% if w.delegated %} <span class="badge">Mieter</span>{% endif %}
-            {% when None %}<span class="badge badge-muted">Nicht zugewiesen</span>
+              {{ n }}{% if w.delegated %} <span class="badge">{{ ui.t("schedule.tenant") }}</span>{% endif %}
+            {% when None %}<span class="badge badge-muted">{{ ui.t("schedule.unassigned") }}</span>
           {% endmatch %}
         </td>
       </tr>
@@ -52,5 +52,5 @@
   </table>
 </section>
 
-<p><a href="/admin/buildings/{{ building.id }}">Zurück zum Gebäude</a></p>
+<p><a href="/admin/buildings/{{ building.id }}">{{ ui.t("schedule.back_to_building") }}</a></p>
 {% endblock %}

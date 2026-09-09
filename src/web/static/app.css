@@ -155,6 +155,41 @@ a {
   color: var(--accent);
 }
 
+/* ---------- Language switcher ---------- */
+
+.lang-switch {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.lang-switch a,
+.lang-switch .lang-sep {
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+}
+
+.lang-switch a:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.lang-switch a.is-active {
+  color: var(--accent);
+  font-weight: 600;
+  cursor: default;
+}
+
+.lang-switch .lang-sep {
+  padding: 0;
+  color: var(--border-strong);
+}
+
 /* ---------- Demo mode banner ---------- */
 
 .demo-banner {

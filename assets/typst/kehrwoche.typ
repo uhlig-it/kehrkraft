@@ -9,10 +9,10 @@
 //
 // The wrapper (see pdf.rs) writes logo.svg / qr.svg / qr_ical.svg next to
 // this file and passes the left/right row arrays plus the absolute PDF and
-// iCal links.
+// iCal links. Column headers and QR captions are localized per request.
 
-#let schedule_table(rows) = table(
-  table.header([*W*], [*von*], [*bis*], [*Name*]),
+#let schedule_table(rows, col_from, col_to) = table(
+  table.header([*W*], [*#col_from*], [*#col_to*], [*Name*]),
   columns: (auto, auto, auto, 1fr),
   stroke: none,
   inset: (x: 4pt, y: 6.3pt),
@@ -31,7 +31,7 @@
   radius: 4pt,
 )
 
-#let kehrwoche(building_name: str, year: int, left_rows: array, right_rows: array, pdf_url: str, ical_url: str) = [
+#let kehrwoche(building_name: str, year: int, left_rows: array, right_rows: array, pdf_url: str, ical_url: str, col_from: str, col_to: str, qr_pdf_caption: str, qr_ical_caption: str) = [
   // Logo floats in the top-right corner, right-aligned to the page margin
   // and independent of the document flow (so its size never pushes the
   // schedule down). dy lifts it into the top margin so it stays clear of
@@ -48,9 +48,9 @@
 
   #set text(size: 10.5pt)
   #columns(2, gutter: 1.1cm)[
-    #schedule_table(left_rows)
+    #schedule_table(left_rows, col_from, col_to)
     #colbreak()
-    #schedule_table(right_rows)
+    #schedule_table(right_rows, col_from, col_to)
   ]
 
   #v(4pt)
@@ -68,7 +68,7 @@
           [#reserved_box]
         }
         #v(2pt)
-        #text(7.5pt, fill: luma(120))[Kehrwoche-PDF per QR öffnen]
+        #text(7.5pt, fill: luma(120))[#qr_pdf_caption]
       ]
     ],
     [
@@ -81,7 +81,7 @@
           [#reserved_box]
         }
         #v(2pt)
-        #text(7.5pt, fill: luma(120))[Kalender-Feed per QR abonnieren]
+        #text(7.5pt, fill: luma(120))[#qr_ical_caption]
       ]
     ],
   )

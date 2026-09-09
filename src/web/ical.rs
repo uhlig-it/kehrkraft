@@ -13,6 +13,7 @@ use axum::{
 use chrono::{Datelike, Duration, Local, Utc};
 
 use crate::db::{queries, Db};
+use crate::i18n::{self, Ui};
 use crate::scheduler::{self, WeekAssignment};
 use crate::web::pdf::sanitize_filename;
 
@@ -24,6 +25,7 @@ const FEED_YEARS: i32 = 2;
 pub async fn public_ical(
     Path(secret_slug): Path<String>,
     State(pool): State<Db>,
+    ui: Ui,
 ) -> impl IntoResponse {
     let building = match queries::get_building_by_slug(&pool, &secret_slug).await {
         Ok(Some(b)) => b,
@@ -46,7 +48,7 @@ pub async fn public_ical(
         }
     }
 
-    let body = ical_document(&building.name, &building.secret_slug, &schedules);
+    let body = ical_document(&building.name, &building.secret_slug, &schedules, ui);
     let filename = format!("Kehrwoche-{}.ics", sanitize_filename(&building.name));
     let cd_val = format!("inline; filename=\"{}\"", filename);
     let cd = HeaderValue::from_str(&cd_val).unwrap_or_else(|_| HeaderValue::from_static("inline"));
@@ -66,11 +68,20 @@ pub async fn public_ical(
 
 /// Compose the full iCalendar document: the calendar header, one all-day
 /// event per week of each schedule, and the closing `END:VCALENDAR`.
-fn ical_document(building_name: &str, slug: &str, schedules: &[Vec<WeekAssignment>]) -> String {
+fn ical_document(
+    building_name: &str,
+    slug: &str,
+    schedules: &[Vec<WeekAssignment>],
+    ui: Ui,
+) -> String {
     let mut out = String::new();
     out.push_str("BEGIN:VCALENDAR\r\n");
     push_ical_line(&mut out, "VERSION", "2.0");
-    push_ical_line(&mut out, "PRODID", "-//Kehrkraft//Kehrwoche//DE");
+    push_ical_line(
+        &mut out,
+        "PRODID",
+        &format!("-//Kehrkraft//Kehrwoche//{}", ui.lang_code().to_uppercase()),
+    );
     push_ical_line(&mut out, "CALSCALE", "GREGORIAN");
     // Widely supported (though non-standard) calendar title that Apple and
     // Google calendars show for the subscription.
@@ -81,7 +92,7 @@ fn ical_document(building_name: &str, slug: &str, schedules: &[Vec<WeekAssignmen
     );
     for schedule in schedules {
         for week in schedule {
-            out.push_str(&event_block(building_name, slug, week));
+            out.push_str(&event_block(building_name, slug, week, ui));
         }
     }
     out.push_str("END:VCALENDAR\r\n");
@@ -90,13 +101,18 @@ fn ical_document(building_name: &str, slug: &str, schedules: &[Vec<WeekAssignmen
 
 /// One all-day `VEVENT` for a single Kehrwoche week (Monday to Sunday).
 /// `DTEND` is exclusive per RFC 5545, so it points to the following Monday.
-fn event_block(building_name: &str, slug: &str, w: &WeekAssignment) -> String {
-    let name = w.assignee_name.as_deref().unwrap_or("Nicht zugewiesen");
-    let summary = format!("Kehrwoche KW {}: {}", w.iso_week, name);
+fn event_block(building_name: &str, slug: &str, w: &WeekAssignment, ui: Ui) -> String {
+    let name = w
+        .assignee_name
+        .as_deref()
+        .unwrap_or_else(|| i18n::msg(ui.lang, "schedule.unassigned"));
+    let summary = i18n::msgf(ui.lang, "ical.summary", &[&w.iso_week.to_string(), name]);
+    let fmt = i18n::date_format(ui.lang);
     let description = format!(
-        "Gebäude: {building_name}\n{} – {}",
-        w.start.format("%d.%m.%Y"),
-        w.end.format("%d.%m.%Y")
+        "{}\n{} – {}",
+        i18n::msgf(ui.lang, "ical.building", &[building_name]),
+        w.start.format(fmt),
+        w.end.format(fmt)
     );
 
     let mut out = String::new();
@@ -182,6 +198,7 @@ fn fold_line(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::i18n::Lang;
     use chrono::NaiveDate;
 
     fn week(year: i32, iso_week: u32, name: Option<&str>) -> WeekAssignment {
@@ -201,7 +218,12 @@ mod tests {
 
     #[test]
     fn event_covers_monday_to_sunday_with_exclusive_end() {
-        let doc = ical_document("Baumhaus", "slug", &[vec![week(2026, 12, Some("Anna"))]]);
+        let doc = ical_document(
+            "Baumhaus",
+            "slug",
+            &[vec![week(2026, 12, Some("Anna"))]],
+            Ui::for_lang(Lang::De),
+        );
         assert!(doc.contains("DTSTART;VALUE=DATE:20260316"), "{doc}");
         // The week ends Sunday 2026-03-22; DTEND is exclusive, so the next day.
         assert!(doc.contains("DTEND;VALUE=DATE:20260323"), "{doc}");
@@ -209,17 +231,44 @@ mod tests {
 
     #[test]
     fn summary_contains_iso_week_and_assignee() {
-        let doc = ical_document("Baumhaus", "slug", &[vec![week(2026, 12, Some("Anna"))]]);
+        let doc = ical_document(
+            "Baumhaus",
+            "slug",
+            &[vec![week(2026, 12, Some("Anna"))]],
+            Ui::for_lang(Lang::De),
+        );
         assert!(doc.contains("SUMMARY:Kehrwoche KW 12: Anna"), "{doc}");
     }
 
     #[test]
     fn unassigned_weeks_get_a_fallback_summary() {
-        let doc = ical_document("Baumhaus", "slug", &[vec![week(2026, 12, None)]]);
+        let doc = ical_document(
+            "Baumhaus",
+            "slug",
+            &[vec![week(2026, 12, None)]],
+            Ui::for_lang(Lang::De),
+        );
         assert!(
             doc.contains("SUMMARY:Kehrwoche KW 12: Nicht zugewiesen"),
             "{doc}"
         );
+    }
+
+    #[test]
+    fn english_feed_uses_cw_and_unassigned() {
+        let doc = ical_document(
+            "Baumhaus",
+            "slug",
+            &[
+                vec![week(2026, 12, Some("Anna"))],
+                vec![week(2026, 13, None)],
+            ],
+            Ui::for_lang(Lang::En),
+        );
+        assert!(doc.contains("SUMMARY:Kehrwoche CW 12: Anna"), "{doc}");
+        assert!(doc.contains("SUMMARY:Kehrwoche CW 13: Unassigned"), "{doc}");
+        assert!(doc.contains("Building: Baumhaus"), "{doc}");
+        assert!(doc.contains("-//Kehrkraft//Kehrwoche//EN"), "{doc}");
     }
 
     #[test]
@@ -268,7 +317,7 @@ mod tests {
                     .collect(),
             );
         }
-        let doc = ical_document(long_name, "slug", &schedules);
+        let doc = ical_document(long_name, "slug", &schedules, Ui::for_lang(Lang::De));
         for line in doc.split("\r\n") {
             assert!(line.len() <= 75, "physical line too long: {line:?}");
         }
@@ -276,7 +325,12 @@ mod tests {
 
     #[test]
     fn document_is_a_complete_vcalendar() {
-        let doc = ical_document("Baumhaus", "slug", &[vec![week(2026, 12, Some("Anna"))]]);
+        let doc = ical_document(
+            "Baumhaus",
+            "slug",
+            &[vec![week(2026, 12, Some("Anna"))]],
+            Ui::for_lang(Lang::De),
+        );
         assert!(doc.starts_with("BEGIN:VCALENDAR\r\n"), "{doc}");
         assert!(doc.ends_with("END:VCALENDAR\r\n"), "{doc}");
         assert!(doc.contains("X-WR-CALNAME:Kehrwoche Baumhaus"), "{doc}");

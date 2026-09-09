@@ -4,18 +4,18 @@
 
 {% block content %}
 <nav class="breadcrumb">
-  <a href="/admin">Gebäude</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">{{ apartment.name }}</a><span class="sep">/</span><span>Mieter: {{ tenancy.name }}</span>
+  <a href="/admin">{{ ui.t("nav.buildings") }}</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}">{{ building.name }}</a><span class="sep">/</span><a href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">{{ apartment.name }}</a><span class="sep">/</span><span>{{ ui.t1("tenancy.breadcrumb", &tenancy.name) }}</span>
 </nav>
 
 <div class="page-header">
-  <h1>Mieter bearbeiten: {{ tenancy.name }}</h1>
-  <p class="subtitle">Wohnung {{ apartment.name }} ({{ building.name }})</p>
+  <h1>{{ ui.t1("tenancy.edit_title_with", &tenancy.name) }}</h1>
+  <p class="subtitle">{{ ui.t2("tenancy.edit_subtitle", &apartment.name, &building.name) }}</p>
 </div>
 
 <div class="card">
   {% include "admin/_error.html" %}
   <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/tenancies/{{ tenancy.id }}">
-    <p class="muted">Name und E-Mail-Adresse gehören zur Person und gelten damit für alle Zeiträume, in denen sie geführt wird – auch als Eigentümerin oder Eigentümer.</p>
+    <p class="muted">{{ ui.t("tenancy.person_help") }}</p>
     <label class="field">
       Name
       <input type="text" name="name" id="tenancy-edit-name" list="people-names"
@@ -23,24 +23,24 @@
     </label>
 
     <label class="field">
-      E-Mail
+      {{ ui.t("form.email") }}
       <input type="email" name="email" id="tenancy-edit-email" list="people-emails"
              value="{{ form.email }}" required />
     </label>
 
     <label class="field">
-      Mietbeginn
+      {{ ui.t("tenancy.start") }}
       <input type="date" name="start_date" value="{{ form.start_date }}" required />
     </label>
 
     <label class="field">
-      Mietende <span class="hint">(optional)</span>
+      {{ ui.t("tenancy.end") }} <span class="hint">{{ ui.t("form.optional") }}</span>
       <input type="date" name="end_date" value="{% if let Some(ed) = form.end_date %}{{ ed }}{% endif %}" />
     </label>
 
     <div class="form-actions">
-      <button type="submit" class="btn btn-primary">Änderungen speichern</button>
-      <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">Abbrechen</a>
+      <button type="submit" class="btn btn-primary">{{ ui.t("common.save_changes") }}</button>
+      <a class="btn btn-secondary" href="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}">{{ ui.t("common.cancel") }}</a>
     </div>
   </form>
 
