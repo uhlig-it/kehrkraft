@@ -6,7 +6,7 @@ use axum::{
 use chrono::{Datelike, Local};
 use fast_qr::convert::svg::SvgBuilder;
 use fast_qr::qr::QRBuilder;
-use rand::RngCore;
+use rand::Rng;
 use std::path::PathBuf;
 use tokio::process::Command;
 use tokio::{

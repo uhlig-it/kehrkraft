@@ -21,7 +21,7 @@ use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat, Utc};
 use object_store::ObjectStore;
-use rand::RngCore;
+use rand::Rng;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection};
 use sqlx::Connection;
 

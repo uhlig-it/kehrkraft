@@ -1,5 +1,5 @@
 use base64::Engine as _;
-use rand::RngCore;
+use rand::Rng;
 
 use crate::db::models::{
     Apartment, Building, BuildingAdministrator, BuildingOwner, Ownership, Person, PersonRoleRow,
