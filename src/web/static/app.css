@@ -51,6 +51,7 @@
   --accent: #2e5e7e;
   --accent-hover: #254b64;
   --accent-soft: #e4ecf1;
+  --accent-ring: rgba(46, 94, 126, 0.15);
   --danger: #c93c2c;
   --danger-soft: #fbf1ef;
   --danger-border: #ecc4bd;
@@ -352,7 +353,7 @@ a {
 .rotation-seed-controls select:focus-visible {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 .rotation-seed-hint {
@@ -543,7 +544,7 @@ input[type="date"] {
 input:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 fieldset {
@@ -906,7 +907,17 @@ tr.is-current td:first-child {
 
   .topbar-inner {
     padding: 0.5rem 0.75rem;
-    gap: 0.75rem;
+    gap: 0.25rem 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  /* The main nav takes the second row so the language switch always fits
+     on the first one; the negative margin aligns the first link's label
+     with the brand above. */
+  .topnav {
+    order: 3;
+    width: 100%;
+    margin-left: -0.75rem;
   }
 
   .brand-name {
