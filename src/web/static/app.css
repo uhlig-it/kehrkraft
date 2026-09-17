@@ -662,18 +662,25 @@ details.disclosure form {
   display: none !important;
 }
 
-/* Repeatable person rows of the owner forms: name and e-mail side by side
-   with the per-row remove button; the row-remove button hides when only one
-   row remains (the JS toggles `hidden`). */
+/* Repeatable person rows of the owner forms: the fields (name and e-mail,
+   plus the optional display name on the edit forms) share the row equally,
+   with the per-row remove button at the end; it hides when only one row
+   remains (the JS toggles `hidden`). */
 .person-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr auto;
-  column-gap: 0.75rem;
-  align-items: end;
-  margin-bottom: 0.25rem;
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  margin-bottom: 0.9rem;
+}
+
+.person-row > .field {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-bottom: 0;
 }
 
 .person-row-remove {
+  flex: none;
   white-space: nowrap;
 }
 
@@ -931,6 +938,25 @@ tr.is-current td:first-child {
 
   .form-actions {
     flex-wrap: wrap;
+  }
+
+  /* Person rows stack: each field full width, rows separated by a dashed
+     line (the disclosure motif), remove button below the fields. */
+  .person-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    margin-bottom: 0;
+    padding-bottom: 0.75rem;
+  }
+
+  .person-row + .person-row {
+    border-top: 1px dashed var(--border);
+    padding-top: 0.75rem;
+  }
+
+  .person-row .person-row-remove {
+    align-self: flex-start;
   }
 
   /* iOS zooms on input focus unless the font is at least 16px. */
