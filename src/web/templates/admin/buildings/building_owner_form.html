@@ -28,17 +28,33 @@
   {% endif %}
   <form method="post" action="{{ action }}">
     <p class="muted">{{ ui.t("building_owner.person_help") }}</p>
-    <label class="field">
-      Name
-      <input type="text" name="name" id="building-owner-name" list="people-names"
-             data-email-field="building-owner-email" value="{{ form.name }}" required />
-    </label>
+    <div class="person-rows" data-scope="building-owner-new">
+      {% for p in form.people %}
+      <div class="person-row">
+        <label class="field">
+          Name
+          <input type="text" name="person_{{ loop.index }}_name" list="people-names"
+                 data-email-field="building-owner-new-email-{{ loop.index }}" value="{{ p.name }}" required />
+        </label>
 
-    <label class="field">
-      {{ ui.t("form.email") }}
-      <input type="email" name="email" id="building-owner-email" list="people-emails"
-             value="{{ form.email }}" required />
-    </label>
+        {% if form.display_names_submitted %}
+        <label class="field">
+          {{ ui.t("person.display_name") }} <span class="hint">{{ ui.t("form.optional") }}</span>
+          <input type="text" name="person_{{ loop.index }}_display_name" value="{{ p.display_name }}" />
+        </label>
+        {% endif %}
+
+        <label class="field">
+          {{ ui.t("form.email") }}
+          <input type="email" name="person_{{ loop.index }}_email" id="building-owner-new-email-{{ loop.index }}"
+                 list="people-emails" value="{{ p.email }}" required />
+        </label>
+
+        <button type="button" class="btn btn-secondary btn-sm person-row-remove">{{ ui.t("owners.remove_person") }}</button>
+      </div>
+      {% endfor %}
+    </div>
+    <button type="button" class="btn btn-secondary btn-sm person-row-add">{{ ui.t("owners.add_person") }}</button>
 
     <label class="field">
       {{ ui.t("form.ownership_from") }}

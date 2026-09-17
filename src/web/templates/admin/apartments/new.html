@@ -29,25 +29,33 @@
     <p class="muted">{{ ui.t("apartments.building_owned_help") }}</p>
     {% else %}
     <p class="muted">{{ ui.t("apartments.owner_required_help") }}</p>
-    <label class="field">
-      Name
-      <input type="text" name="owner_name" id="apartment-owner-name" list="people-names"
-             data-email-field="apartment-owner-email" value="{{ owner_name }}" required />
-    </label>
-    <label class="field">
-      {{ ui.t("form.email") }}
-      <input type="email" name="owner_email" id="apartment-owner-email" list="people-emails"
-             value="{{ owner_email }}" required />
-    </label>
+    <p class="muted">{{ ui.t("suggestions.help") }}</p>
+    <div class="person-rows" data-scope="apartment-owner">
+      {% for p in owner.people %}
+      <div class="person-row">
+        <label class="field">
+          Name
+          <input type="text" name="person_{{ loop.index }}_name" list="people-names"
+                 data-email-field="apartment-owner-email-{{ loop.index }}" value="{{ p.name }}" required />
+        </label>
+        <label class="field">
+          {{ ui.t("form.email") }}
+          <input type="email" name="person_{{ loop.index }}_email" id="apartment-owner-email-{{ loop.index }}"
+                 list="people-emails" value="{{ p.email }}" required />
+        </label>
+        <button type="button" class="btn btn-secondary btn-sm person-row-remove">{{ ui.t("owners.remove_person") }}</button>
+      </div>
+      {% endfor %}
+    </div>
+    <button type="button" class="btn btn-secondary btn-sm person-row-add">{{ ui.t("owners.add_person") }}</button>
     <label class="field">
       {{ ui.t("form.ownership_from") }}
-      <input type="date" name="owner_start_date" value="{{ owner_start_date }}" required />
+      <input type="date" name="owner_start_date" value="{{ owner.start_date }}" required />
     </label>
     <label class="field">
       {{ ui.t("apartments.ownership_until") }} <span class="hint">{{ ui.t("form.optional") }}</span>
-      <input type="date" name="owner_end_date" value="{% if let Some(ed) = owner_end_date %}{{ ed }}{% endif %}" />
+      <input type="date" name="owner_end_date" value="{% if let Some(ed) = owner.end_date %}{{ ed }}{% endif %}" />
     </label>
-    <p class="muted">{{ ui.t("suggestions.help") }}</p>
     {% include "admin/_people_datalists.html" %}
     {% endif %}
 

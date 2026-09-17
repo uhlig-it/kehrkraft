@@ -23,6 +23,11 @@
     </label>
 
     <label class="field">
+      {{ ui.t("person.display_name") }} <span class="hint">{{ ui.t("form.optional") }}</span>
+      <input type="text" name="display_name" value="{% if let Some(dn) = form.display_name %}{{ dn }}{% endif %}" />
+    </label>
+
+    <label class="field">
       {{ ui.t("form.email") }}
       <input type="email" name="email" id="tenancy-edit-email" list="people-emails"
              value="{{ form.email }}" required />

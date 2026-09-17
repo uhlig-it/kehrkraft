@@ -660,7 +660,7 @@ async fn adding_building_owner_asks_to_close_previous_building_owner() {
         .expect("list building owners");
     let berlin = owners
         .iter()
-        .find(|o| o.name == "Berlin Wohnen GmbH")
+        .find(|o| o.people.iter().any(|p| p.name == "Berlin Wohnen GmbH"))
         .expect("Berlin Wohnen");
     assert_eq!(
         berlin.end_date.as_deref(),
@@ -668,7 +668,9 @@ async fn adding_building_owner_asks_to_close_previous_building_owner() {
         "previous building owner ends the day before"
     );
     assert!(
-        owners.iter().any(|o| o.name == "Hansa Baugesellschaft"),
+        owners
+            .iter()
+            .any(|o| o.people.iter().any(|p| p.name == "Hansa Baugesellschaft")),
         "new building owner added"
     );
 }
@@ -768,11 +770,11 @@ async fn current_building_owner_cannot_be_deleted() {
         .expect("list building owners");
     let a = owners
         .iter()
-        .find(|o| o.name == "Deutsche Wohnbau SE")
+        .find(|o| o.people.iter().any(|p| p.name == "Deutsche Wohnbau SE"))
         .expect("predecessor A");
     let b = owners
         .iter()
-        .find(|o| o.name == "Berlin Wohnen GmbH")
+        .find(|o| o.people.iter().any(|p| p.name == "Berlin Wohnen GmbH"))
         .expect("successor B");
     assert!(a.end_date.is_some(), "A is closed by the handover");
 
@@ -870,7 +872,7 @@ async fn current_apartment_owner_cannot_be_deleted() {
         .expect("list ownerships");
     let otto = owners
         .iter()
-        .find(|o| o.name == "Otto")
+        .find(|o| o.people.iter().any(|p| p.name == "Otto"))
         .expect("current owner");
     let denied = basic_auth(client.post(format!("{apt_url}/ownerships/{}/delete", otto.id)))
         .send()
@@ -889,7 +891,11 @@ async fn current_apartment_owner_cannot_be_deleted() {
 
     let initial = owners
         .iter()
-        .find(|o| o.name == "Ursprünglicher Eigentümer")
+        .find(|o| {
+            o.people
+                .iter()
+                .any(|p| p.name == "Ursprünglicher Eigentümer")
+        })
         .expect("initial owner");
     let past_delete =
         basic_auth(client.post(format!("{apt_url}/ownerships/{}/delete", initial.id)))
@@ -1070,7 +1076,7 @@ async fn setting_current_apartment_owner_end_date_asks_confirmation() {
         .expect("list ownerships");
     let otto = owners
         .iter()
-        .find(|o| o.name == "Otto")
+        .find(|o| o.people.iter().any(|p| p.name == "Otto"))
         .expect("current owner");
     let owner_url = format!("{apt_url}/ownerships/{}", otto.id);
     let update = |fields: &[(&str, &str)]| {
@@ -1394,8 +1400,11 @@ async fn owner_person_is_shared_across_building_and_apartment() {
         .await
         .expect("list ownerships");
     assert_eq!(ownerships.len(), 1);
-    assert_eq!(building_owners[0].person_id, ownerships[0].person_id);
-    assert_eq!(building_owners[0].name, "Deutsche Wohnbau AG");
+    assert_eq!(
+        building_owners[0].people[0].person_id,
+        ownerships[0].people[0].person_id
+    );
+    assert_eq!(building_owners[0].people[0].name, "Deutsche Wohnbau AG");
 
     // The ownership edit page renders with the suggestion lists and the
     // person's current name pre-filled.
@@ -1452,7 +1461,7 @@ async fn owner_person_is_shared_across_building_and_apartment() {
     let ownerships = queries::list_ownerships(&h.pool, &apartment_id)
         .await
         .expect("list ownerships after rename");
-    assert_eq!(ownerships[0].name, "Deutsche Wohnbau SE & Co. KG");
+    assert_eq!(ownerships[0].people[0].name, "Deutsche Wohnbau SE & Co. KG");
     let page = basic_auth(client.get(format!(
         "{}/admin/buildings/{second_building}/apartments/{apartment_id}",
         h.base_url
@@ -2549,18 +2558,26 @@ async fn adding_owner_asks_to_close_previous_ownership() {
     let owners = queries::list_ownerships(&h.pool, &apartment_id)
         .await
         .expect("list ownerships");
-    let karl = owners.iter().find(|o| o.name == "Karl").expect("Karl");
+    let karl = owners
+        .iter()
+        .find(|o| o.people.iter().any(|p| p.name == "Karl"))
+        .expect("Karl");
     assert_eq!(
         karl.end_date.as_deref(),
         Some("2026-07-31"),
         "previous ownership ends the day before"
     );
-    assert!(owners.iter().any(|o| o.name == "Karla"), "new owner added");
+    assert!(
+        owners
+            .iter()
+            .any(|o| o.people.iter().any(|p| p.name == "Karla")),
+        "new owner added"
+    );
 
     // Updating an ownership into an overlapping period is still rejected.
     let karla_id = owners
         .iter()
-        .find(|o| o.name == "Karla")
+        .find(|o| o.people.iter().any(|p| p.name == "Karla"))
         .expect("Karla ownership")
         .id
         .clone();
@@ -3166,5 +3183,234 @@ async fn building_can_be_created_without_ansprechpartner() {
     assert!(
         !body.contains("Ansprechpartner"),
         "no contact line without Ansprechpartner, got {body:?}"
+    );
+}
+
+/// An ownership period may list several persons (repeatable person rows in the
+/// forms, `person_{n}_name`/`person_{n}_email` fields), and a person's display
+/// name is shown instead of the name throughout the UI.
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn multi_person_owner_and_display_name_flow() {
+    let h = harness::start().await;
+    let client = admin_client();
+
+    let building_id = create_building(&h, &client, "Mehrpersonenhaus").await;
+
+    // Create an apartment whose first ownership lists two owners.
+    let resp = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/apartments",
+        h.base_url
+    )))
+    .form(&[
+        ("name", "EG"),
+        ("description", ""),
+        ("person_1_name", "Anna Muster"),
+        ("person_1_email", "anna.muster@example.com"),
+        ("person_2_name", "Ben Muster"),
+        ("person_2_email", "ben.muster@example.com"),
+        ("owner_start_date", "2026-01-01"),
+    ])
+    .send()
+    .await
+    .expect("create apartment with two owners");
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let location = resp
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .expect("Location header")
+        .to_string();
+    let prefix = format!("/admin/buildings/{building_id}/apartments/");
+    let apartment_id = location.trim_start_matches(&prefix).to_string();
+
+    // The apartment page joins the owners with " & " and links each of them.
+    let page = basic_auth(client.get(format!(
+        "{}/admin/buildings/{building_id}/apartments/{apartment_id}",
+        h.base_url
+    )))
+    .send()
+    .await
+    .expect("fetch apartment page")
+    .text()
+    .await
+    .expect("apartment body");
+    assert!(
+        page.contains("Anna Muster</a> & <a href=\"/admin/people/"),
+        "two owners joined with an ampersand, got {page:?}"
+    );
+    assert!(
+        page.contains("ben.muster@example.com"),
+        "both e-mails shown"
+    );
+
+    // The edit form pre-fills both person rows.
+    let ownership_id = queries::list_ownerships(&h.pool, &apartment_id)
+        .await
+        .expect("list ownerships")[0]
+        .id
+        .clone();
+    let edit = basic_auth(client.get(format!(
+        "{}/admin/buildings/{building_id}/apartments/{apartment_id}/ownerships/{ownership_id}/edit",
+        h.base_url
+    )))
+    .send()
+    .await
+    .expect("fetch ownership edit page")
+    .text()
+    .await
+    .expect("edit body");
+    assert!(
+        edit.contains(r#"name="person_1_name""#) && edit.contains(r#"name="person_2_name""#),
+        "both person rows pre-filled, got {edit:?}"
+    );
+
+    // Give Anna a display name on the person page; it replaces her name in
+    // the ownership listing.
+    let anna = queries::list_people(&h.pool)
+        .await
+        .expect("list people")
+        .into_iter()
+        .find(|p| p.email == "anna.muster@example.com")
+        .expect("Anna person");
+    let rename = basic_auth(client.post(format!("{}/admin/people/{}", h.base_url, anna.id)))
+        .form(&[
+            ("name", "Anna Muster"),
+            ("display_name", "Fam. Muster"),
+            ("email", "anna.muster@example.com"),
+        ])
+        .send()
+        .await
+        .expect("set display name");
+    assert_eq!(rename.status(), StatusCode::SEE_OTHER);
+
+    let page = basic_auth(client.get(format!(
+        "{}/admin/buildings/{building_id}/apartments/{apartment_id}",
+        h.base_url
+    )))
+    .send()
+    .await
+    .expect("fetch apartment page after rename")
+    .text()
+    .await
+    .expect("apartment body after rename");
+    assert!(
+        page.contains("Fam. Muster</a> & <a"),
+        "display name replaces the name in the joined listing, got {page:?}"
+    );
+    // The people index shows the display name as well.
+    let people_page = basic_auth(client.get(format!("{}/admin/people", h.base_url)))
+        .send()
+        .await
+        .expect("fetch people index")
+        .text()
+        .await
+        .expect("people index body");
+    assert!(
+        people_page.contains(">Fam. Muster</a>"),
+        "display name in the people index, got {people_page:?}"
+    );
+
+    // Replace the owner set through the edit form: drop Anna, add Cid.
+    let update = basic_auth(client.post(format!(
+        "{}/admin/buildings/{building_id}/apartments/{apartment_id}/ownerships/{ownership_id}",
+        h.base_url
+    )))
+    .form(&[
+        ("person_1_name", "Ben Muster"),
+        ("person_1_email", "ben.muster@example.com"),
+        ("person_2_name", "Cid Muster"),
+        ("person_2_email", "cid.muster@example.com"),
+        ("start_date", "2026-01-01"),
+        ("end_date", ""),
+    ])
+    .send()
+    .await
+    .expect("update owner set");
+    assert_eq!(update.status(), StatusCode::SEE_OTHER);
+    let ownerships = queries::list_ownerships(&h.pool, &apartment_id)
+        .await
+        .expect("list ownerships");
+    assert_eq!(ownerships[0].label(), "Ben Muster & Cid Muster");
+    // Anna lost her only reference; her person row is removed automatically.
+    assert!(
+        !queries::list_people(&h.pool)
+            .await
+            .expect("list people")
+            .iter()
+            .any(|p| p.email == "anna.muster@example.com"),
+        "orphaned person is cleaned up"
+    );
+
+    // Ben becomes the tenant; the tenancy edit form offers a display-name
+    // field, and saving it replaces his name in the tenant listing and the
+    // people index alike.
+    let apt_url = format!(
+        "{}/admin/buildings/{building_id}/apartments/{apartment_id}",
+        h.base_url
+    );
+    let created = basic_auth(client.post(format!("{apt_url}/tenancies")))
+        .form(&[
+            ("name", "Ben Muster"),
+            ("email", "ben.muster@example.com"),
+            ("start_date", "2026-02-01"),
+            ("end_date", ""),
+        ])
+        .send()
+        .await
+        .expect("create tenancy");
+    assert_eq!(created.status(), StatusCode::SEE_OTHER);
+    let tenancy = queries::list_tenancies(&h.pool, &apartment_id)
+        .await
+        .expect("list tenancies")
+        .pop()
+        .expect("one tenancy");
+
+    let edit = basic_auth(client.get(format!("{apt_url}/tenancies/{}/edit", tenancy.id)))
+        .send()
+        .await
+        .expect("fetch tenancy edit page")
+        .text()
+        .await
+        .expect("edit body");
+    assert!(
+        edit.contains(r#"name="display_name""#),
+        "tenancy edit form has a display-name field, got {edit:?}"
+    );
+
+    let update = basic_auth(client.post(format!("{apt_url}/tenancies/{}", tenancy.id)))
+        .form(&[
+            ("name", "Ben Muster"),
+            ("display_name", "B. Muster"),
+            ("email", "ben.muster@example.com"),
+            ("start_date", "2026-02-01"),
+            ("end_date", ""),
+        ])
+        .send()
+        .await
+        .expect("update tenancy with display name");
+    assert_eq!(update.status(), StatusCode::SEE_OTHER);
+
+    let page = basic_auth(client.get(apt_url.clone()))
+        .send()
+        .await
+        .expect("fetch apartment page after tenancy rename")
+        .text()
+        .await
+        .expect("apartment body after tenancy rename");
+    assert!(
+        page.contains(">B. Muster</a>"),
+        "tenant display name on the apartment page, got {page:?}"
+    );
+    let people_page = basic_auth(client.get(format!("{}/admin/people", h.base_url)))
+        .send()
+        .await
+        .expect("fetch people index")
+        .text()
+        .await
+        .expect("people index body");
+    assert!(
+        people_page.contains(">B. Muster</a>"),
+        "display name in the people index, got {people_page:?}"
     );
 }

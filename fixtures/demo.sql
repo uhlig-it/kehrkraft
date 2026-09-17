@@ -17,16 +17,17 @@
 --
 -- The inserts run in one transaction: owners, tenants and Ansprechpartner are
 -- stored once per person in `people` (migrations 0007/0008) and referenced by
--- the period tables via person_id. The ownerships FK is deferred and the
--- database requires an ownership row – or a covering building owner, see
--- migration 0005 – to exist before an apartment can be inserted
--- (`apartments_require_ownership` trigger), so ownerships and building owners
--- come first. The deletes go through the building's cascade, which removes
--- the ownerships, building owners, tenancies and admins together with their
--- apartments (the delete guards of 0004/0005 only fire while the parent row
--- still exists, so they let the cascades pass); people that no record
--- references anymore are removed by the cleanup triggers of 0007/0008, so
--- re-running the fixture stays idempotent for the person rows as well.
+-- the period tables via the join tables `ownership_people`/
+-- `building_owner_people` (migration 0013), so the join rows come before
+-- their periods (the period-required trigger demands them), the periods before
+-- the apartments (`apartments_require_ownership`), and a covering building
+-- owner makes per-apartment ownerships unnecessary (migration 0005). The
+-- deletes go through the building's cascade, which removes the ownerships,
+-- building owners, tenancies and admins together with their apartments (the
+-- delete guards of 0004/0005 only fire while the parent row still exists, so
+-- they let the cascades pass); people that no record references anymore are
+-- removed by the cleanup triggers of 0007/0008/0013, so re-running the
+-- fixture stays idempotent for the person rows as well.
 
 PRAGMA foreign_keys = ON;
 
@@ -62,12 +63,19 @@ VALUES
     ('person-krabappel', 'Edna Krabappel-Flanders',   'krabby@example.com'),
     ('person-burns',     'Charles Montgomery Burns',  'monty@example.com');
 
-INSERT INTO ownerships (id, apartment_id, person_id, start_date)
+INSERT INTO ownership_people (ownership_id, person_id, position)
 VALUES
-    ('ownership-macdougal', 'apartment-basement', 'person-macdougal', '2026-01-01'),
-    ('ownership-homer',     'apartment-ground',   'person-homer',     '2026-01-01'),
-    ('ownership-krabappel', 'apartment-first',    'person-krabappel', '2026-01-01'),
-    ('ownership-burns',     'apartment-roof',     'person-burns',     '2026-01-01');
+    ('ownership-macdougal', 'person-macdougal', 0),
+    ('ownership-homer',     'person-homer',     0),
+    ('ownership-krabappel', 'person-krabappel', 0),
+    ('ownership-burns',     'person-burns',     0);
+
+INSERT INTO ownerships (id, apartment_id, start_date)
+VALUES
+    ('ownership-macdougal', 'apartment-basement', '2026-01-01'),
+    ('ownership-homer',     'apartment-ground',   '2026-01-01'),
+    ('ownership-krabappel', 'apartment-first',    '2026-01-01'),
+    ('ownership-burns',     'apartment-roof',     '2026-01-01');
 
 INSERT INTO apartments (id, building_id, name, description, position)
 VALUES
@@ -110,16 +118,27 @@ VALUES
     ('person-elphi-7', 'Sönke Sandbank, Dr. med. h.c.',      'soenke.sandbank@example.com'),
     ('person-elphi-8', 'Marlene Möwe, Prof. h.c.',           'marlene.moewe@example.com');
 
-INSERT INTO ownerships (id, apartment_id, person_id, start_date)
+INSERT INTO ownership_people (ownership_id, person_id, position)
 VALUES
-    ('ownership-elphi-1', 'apartment-elphi-1', 'person-elphi-1', '2016-01-01'),
-    ('ownership-elphi-2', 'apartment-elphi-2', 'person-elphi-2', '2016-01-01'),
-    ('ownership-elphi-3', 'apartment-elphi-3', 'person-elphi-3', '2017-01-01'),
-    ('ownership-elphi-4', 'apartment-elphi-4', 'person-elphi-4', '2017-01-01'),
-    ('ownership-elphi-5', 'apartment-elphi-5', 'person-elphi-5', '2016-01-01'),
-    ('ownership-elphi-6', 'apartment-elphi-6', 'person-elphi-6', '2017-01-01'),
-    ('ownership-elphi-7', 'apartment-elphi-7', 'person-elphi-7', '2016-01-01'),
-    ('ownership-elphi-8', 'apartment-elphi-8', 'person-elphi-8', '2017-01-01');
+    ('ownership-elphi-1', 'person-elphi-1', 0),
+    ('ownership-elphi-2', 'person-elphi-2', 0),
+    ('ownership-elphi-3', 'person-elphi-3', 0),
+    ('ownership-elphi-4', 'person-elphi-4', 0),
+    ('ownership-elphi-5', 'person-elphi-5', 0),
+    ('ownership-elphi-6', 'person-elphi-6', 0),
+    ('ownership-elphi-7', 'person-elphi-7', 0),
+    ('ownership-elphi-8', 'person-elphi-8', 0);
+
+INSERT INTO ownerships (id, apartment_id, start_date)
+VALUES
+    ('ownership-elphi-1', 'apartment-elphi-1', '2016-01-01'),
+    ('ownership-elphi-2', 'apartment-elphi-2', '2016-01-01'),
+    ('ownership-elphi-3', 'apartment-elphi-3', '2017-01-01'),
+    ('ownership-elphi-4', 'apartment-elphi-4', '2017-01-01'),
+    ('ownership-elphi-5', 'apartment-elphi-5', '2016-01-01'),
+    ('ownership-elphi-6', 'apartment-elphi-6', '2017-01-01'),
+    ('ownership-elphi-7', 'apartment-elphi-7', '2016-01-01'),
+    ('ownership-elphi-8', 'apartment-elphi-8', '2017-01-01');
 
 INSERT INTO apartments (id, building_id, name, description, position)
 VALUES
@@ -176,8 +195,11 @@ VALUES ('admin-haus-12-dw', 'building-haus-12', 'person-hh-doreen');
 INSERT INTO people (id, name, email)
 VALUES ('person-haus-12-dw', 'Deutsche Wohnbau SE', 'service@deutsche-wohnbau.example');
 
-INSERT INTO building_owners (id, building_id, person_id, start_date)
-VALUES ('building-owner-haus-12-dw', 'building-haus-12', 'person-haus-12-dw', '1995-01-01');
+INSERT INTO building_owner_people (building_owner_id, person_id, position)
+VALUES ('building-owner-haus-12-dw', 'person-haus-12-dw', 0);
+
+INSERT INTO building_owners (id, building_id, start_date)
+VALUES ('building-owner-haus-12-dw', 'building-haus-12', '1995-01-01');
 
 INSERT INTO apartments (id, building_id, name, description, position)
 VALUES

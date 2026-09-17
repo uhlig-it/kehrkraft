@@ -17,7 +17,7 @@
     {% endif %}
     {% if admins.len() > 0 %}
     <p class="meta-line">
-      {{ ui.t("buildings.contact_label_line") }}{% for a in admins %}{% if !loop.first %},{% endif %} <a href="/admin/people/{{ a.person_id }}">{{ a.name }}</a> (<a href="mailto:{{ a.email }}">{{ a.email }}</a>){% endfor %}
+      {{ ui.t("buildings.contact_label_line") }}{% for a in admins %}{% if !loop.first %}{% if loop.last %} & {% else %}, {% endif %}{% endif %} <a href="/admin/people/{{ a.person_id }}">{{ a.effective_name() }}</a> (<a href="mailto:{{ a.email }}">{{ a.email }}</a>){% endfor %}
     </p>
     {% endif %}
   </div>
@@ -117,8 +117,8 @@
     <tbody>
     {% for o in building_owners %}
       <tr>
-        <td data-label="Name"><a href="/admin/people/{{ o.person_id }}">{{ o.name }}</a></td>
-        <td data-label="{{ ui.t("table.email") }}">{{ o.email }}</td>
+        <td data-label="Name">{% for p in o.people %}{% if !loop.first %}{% if loop.last %} & {% else %}, {% endif %}{% endif %}<a href="/admin/people/{{ p.person_id }}">{{ p.effective_name() }}</a>{% endfor %}</td>
+        <td data-label="{{ ui.t("table.email") }}">{% for p in o.people %}{% if !loop.first %}, {% endif %}{{ p.email }}{% endfor %}</td>
         <td data-label="{{ ui.t("table.start") }}">{{ o.start_date }}</td>
         <td data-label="{{ ui.t("table.end") }}">{% if o.end_date.is_some() %}{{ o.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
         <td class="col-actions">

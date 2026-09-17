@@ -32,12 +32,15 @@ impl From<sqlx::Error> for ScheduleError {
     }
 }
 
-/// Common accessors for ownership and tenancy rows, which share a layout.
+/// Common accessors for ownership, tenancy and building-owner rows, which
+/// share a layout. `name`/`email` are the *display* values: the effective
+/// name (display name when set) per person, joined for multi-person periods,
+/// and the joined e-mails.
 trait DatedRecord {
     fn id(&self) -> &str;
     fn apartment_id(&self) -> &str;
-    fn name(&self) -> &str;
-    fn email(&self) -> &str;
+    fn name(&self) -> String;
+    fn email(&self) -> String;
     fn start_date(&self) -> &str;
     fn end_date(&self) -> Option<&str>;
 }
@@ -49,11 +52,15 @@ impl DatedRecord for Ownership {
     fn apartment_id(&self) -> &str {
         &self.apartment_id
     }
-    fn name(&self) -> &str {
-        &self.name
+    fn name(&self) -> String {
+        self.label()
     }
-    fn email(&self) -> &str {
-        &self.email
+    fn email(&self) -> String {
+        self.people
+            .iter()
+            .map(|p| p.email.clone())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
     fn start_date(&self) -> &str {
         &self.start_date
@@ -70,11 +77,11 @@ impl DatedRecord for Tenancy {
     fn apartment_id(&self) -> &str {
         &self.apartment_id
     }
-    fn name(&self) -> &str {
-        &self.name
+    fn name(&self) -> String {
+        self.effective_name()
     }
-    fn email(&self) -> &str {
-        &self.email
+    fn email(&self) -> String {
+        self.email.clone()
     }
     fn start_date(&self) -> &str {
         &self.start_date
@@ -94,11 +101,15 @@ impl DatedRecord for BuildingOwner {
     fn apartment_id(&self) -> &str {
         &self.building_id
     }
-    fn name(&self) -> &str {
-        &self.name
+    fn name(&self) -> String {
+        self.label()
     }
-    fn email(&self) -> &str {
-        &self.email
+    fn email(&self) -> String {
+        self.people
+            .iter()
+            .map(|p| p.email.clone())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
     fn start_date(&self) -> &str {
         &self.start_date
@@ -319,8 +330,8 @@ fn parse_people<P: DatedRecord>(raw: Vec<P>) -> Result<Vec<DatedPerson>, Schedul
             Ok(DatedPerson {
                 id: p.id().to_string(),
                 apartment_id: p.apartment_id().to_string(),
-                name: p.name().to_string(),
-                email: p.email().to_string(),
+                name: p.name(),
+                email: p.email(),
                 start,
                 end,
             })
@@ -371,9 +382,12 @@ mod tests {
             building_id,
             name,
             "",
-            &queries::NewOwner {
-                name: owner_name,
-                email: &owner_email,
+            &queries::NewPeriod {
+                people: &[queries::NewPerson {
+                    name: owner_name,
+                    email: &owner_email,
+                    display_name: None,
+                }],
                 start_date: owner_start,
                 end_date: owner_end,
             },
@@ -391,13 +405,19 @@ mod tests {
     }
 
     async fn add_owner(pool: &Db, apartment_id: &str, name: &str, start: &str, end: Option<&str>) {
+        let email = format!("{name}@example.com");
         queries::create_ownership(
             pool,
             apartment_id,
-            name,
-            &format!("{name}@example.com"),
-            start,
-            end,
+            &queries::NewPeriod {
+                people: &[queries::NewPerson {
+                    name,
+                    email: &email,
+                    display_name: None,
+                }],
+                start_date: start,
+                end_date: end,
+            },
         )
         .await
         .expect("create ownership");
@@ -450,6 +470,114 @@ mod tests {
             .expect("schedule");
         assert!(schedule.len() >= 52);
         assert!(schedule.iter().all(|w| w.assignee_name.is_none()));
+    }
+
+    #[tokio::test]
+    async fn multi_person_owner_uses_joined_display_names() {
+        let (pool, building_id) = setup().await;
+        let anna_email = "anna@example.com";
+        let ben_email = "ben@example.com";
+        let _apt = queries::create_apartment(
+            &pool,
+            &building_id,
+            "EG",
+            "",
+            &queries::NewPeriod {
+                people: &[
+                    queries::NewPerson {
+                        name: "Anna Muster",
+                        email: anna_email,
+                        display_name: None,
+                    },
+                    queries::NewPerson {
+                        name: "Ben Muster",
+                        email: ben_email,
+                        display_name: None,
+                    },
+                ],
+                start_date: "2026-01-01",
+                end_date: None,
+            },
+        )
+        .await
+        .expect("create apartment with two owners");
+
+        // Both owners of the period are joined for the schedule; the display
+        // name of each person takes precedence over the name.
+        let anna = queries::list_people(&pool)
+            .await
+            .expect("list people")
+            .into_iter()
+            .find(|p| p.email == anna_email)
+            .expect("Anna person");
+        queries::update_person(
+            &pool,
+            &anna.id,
+            "Anna Muster",
+            Some("Fam. Muster"),
+            anna_email,
+        )
+        .await
+        .expect("set display name");
+
+        let schedule = schedule_for_year(&building_id, 2026, &pool)
+            .await
+            .expect("schedule");
+        assert!(schedule.len() >= 52);
+        assert!(
+            schedule
+                .iter()
+                .all(|w| w.assignee_name.as_deref() == Some("Fam. Muster & Ben Muster")),
+            "every week is assigned to the joined owner group with display names"
+        );
+    }
+
+    #[tokio::test]
+    async fn tenant_display_name_delegates_into_the_schedule() {
+        let (pool, building_id) = setup().await;
+        let apartment = add_apartment(
+            &pool,
+            &building_id,
+            "EG",
+            "2024-01-01 00:00:00",
+            "Alice",
+            "2024-01-01",
+            None,
+        )
+        .await;
+        add_tenant(&pool, &apartment.id, "Bob", "2024-06-01", None).await;
+
+        let people = queries::list_people(&pool).await.expect("list people");
+        let bob = people
+            .into_iter()
+            .find(|p| p.name == "Bob")
+            .expect("Bob person");
+        queries::update_person(
+            &pool,
+            &bob.id,
+            "Bob Baumann",
+            Some("B. Baumann"),
+            "bob@example.com",
+        )
+        .await
+        .expect("set tenant display name");
+
+        let schedule = schedule_for_year(&building_id, 2024, &pool)
+            .await
+            .expect("schedule");
+        let delegated = schedule
+            .iter()
+            .find(|w| w.delegated)
+            .expect("delegated week");
+        assert_eq!(
+            delegated.assignee_name.as_deref(),
+            Some("B. Baumann"),
+            "the tenant's display name is shown when the duty is delegated"
+        );
+        assert!(schedule
+            .iter()
+            .filter(|w| !w.delegated)
+            .all(|w| w.assignee_name.as_deref() == Some("Alice")));
     }
 
     #[tokio::test]
@@ -640,14 +768,22 @@ mod tests {
         let owners = queries::list_ownerships(&pool, &apt_b.id)
             .await
             .expect("list ownerships");
-        let bob = owners.iter().find(|o| o.name == "Bob").expect("Bob");
+        let bob = owners
+            .iter()
+            .find(|o| o.people.iter().any(|p| p.name == "Bob"))
+            .expect("Bob");
         queries::update_ownership(
             &pool,
             &bob.id,
-            "Bob",
-            "bob@example.com",
-            "2024-01-01",
-            Some("2024-06-30"),
+            &queries::NewPeriod {
+                people: &[queries::NewPerson {
+                    name: "Bob",
+                    email: "bob@example.com",
+                    display_name: None,
+                }],
+                start_date: "2024-01-01",
+                end_date: Some("2024-06-30"),
+            },
         )
         .await
         .expect("close Bob");
@@ -958,13 +1094,19 @@ mod tests {
     }
 
     async fn add_building_owner(pool: &Db, building_id: &str, name: &str, start: &str) {
+        let email = format!("{name}@example.com");
         queries::create_building_owner(
             pool,
             building_id,
-            name,
-            &format!("{name}@example.com"),
-            start,
-            None,
+            &queries::NewPeriod {
+                people: &[queries::NewPerson {
+                    name,
+                    email: &email,
+                    display_name: None,
+                }],
+                start_date: start,
+                end_date: None,
+            },
         )
         .await
         .expect("create building owner");

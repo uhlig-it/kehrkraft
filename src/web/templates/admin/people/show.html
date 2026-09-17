@@ -5,11 +5,12 @@
 {% block content %}
 <nav class="breadcrumb">
   <a href="/admin">{{ ui.t("nav.buildings") }}</a><span class="sep">/</span><a href="/admin/people">{{ ui.t("nav.people") }}</a><span class="sep">/</span><span>{{ person.name }}</span>
+<span>{{ person.effective_name() }}</span>
 </nav>
 
 <div class="page-header">
   <div>
-    <h1>{{ person.name }}</h1>
+    <h1>{{ person.effective_name() }}</h1>
     <p class="subtitle"><a href="mailto:{{ person.email }}">{{ person.email }}</a></p>
   </div>
 </div>
@@ -23,13 +24,17 @@
       <input type="text" name="name" value="{{ form.name }}" required />
     </label>
     <label class="field">
+      {{ ui.t("person.display_name") }} <span class="hint">{{ ui.t("form.optional") }}</span>
+      <input type="text" name="display_name" value="{{ form.display_name }}" />
+    </label>
+    <label class="field">
       {{ ui.t("form.email") }}
       <input type="email" name="email" value="{{ form.email }}" required />
     </label>
     <div class="form-actions">
       <button type="submit" class="btn btn-primary">{{ ui.t("common.save_changes") }}</button>
     </div>
-    <p class="muted">{{ ui.t("person.email_help") }}</p>
+    <p class="muted">{{ ui.t("person.email_help") }}<br>{{ ui.t("person.display_name_help") }}</p>
   </form>
 </section>
 

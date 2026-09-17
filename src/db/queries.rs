@@ -1,9 +1,10 @@
 use base64::Engine as _;
 use rand::Rng;
+use std::collections::HashMap;
 
 use crate::db::models::{
-    Apartment, Building, BuildingAdministrator, BuildingOwner, Ownership, Person, PersonRoleRow,
-    Tenancy,
+    Apartment, Building, BuildingAdministrator, BuildingOwner, Ownership, Person, PersonRef,
+    PersonRoleRow, Tenancy,
 };
 use crate::db::Db;
 
@@ -20,7 +21,7 @@ fn gen_token() -> String {
 pub async fn list_people(pool: &Db) -> Result<Vec<Person>, sqlx::Error> {
     sqlx::query_as::<_, Person>(
         r#"
-        SELECT id, name, email, created_at
+        SELECT id, name, display_name, email, created_at
         FROM people
         ORDER BY lower(name), id
         "#,
@@ -35,6 +36,11 @@ pub async fn list_people(pool: &Db) -> Result<Vec<Person>, sqlx::Error> {
 /// are current contact data stored trimmed, so a differing name on an
 /// existing person updates that person instead of creating a duplicate.
 ///
+/// The optional `display_name` follows the same "current contact data" rule:
+/// `None` leaves an existing display name untouched, `Some` sets it (trimmed;
+/// an empty value clears it). The edit forms of tenants and owners submit it;
+/// the creation forms and legacy clients leave it unset.
+///
 /// Runs inside the caller's transaction: when the surrounding write is
 /// rejected by the database (chain tiling, date format, …), the person
 /// creation rolls back with it and leaves no orphan behind.
@@ -42,9 +48,15 @@ async fn resolve_person(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     name: &str,
     email: &str,
+    display_name: Option<&str>,
 ) -> Result<String, sqlx::Error> {
     let name = name.trim();
     let email = email.trim();
+    // `Some` marks an explicitly submitted display name (the edit forms
+    // collect one): trimmed, and an empty value clears it (the binds below
+    // turn it into NULL). `None` (creation forms and legacy clients) leaves
+    // an existing display name untouched.
+    let display_name = display_name.map(str::trim);
     let existing: Option<String> =
         sqlx::query_scalar("SELECT id FROM people WHERE lower(trim(email)) = lower(?)")
             .bind(email)
@@ -57,16 +69,58 @@ async fn resolve_person(
             .bind(name)
             .execute(&mut **tx)
             .await?;
+        if display_name.is_some() {
+            sqlx::query("UPDATE people SET display_name = ? WHERE id = ?")
+                .bind(display_name.filter(|s| !s.is_empty()))
+                .bind(&id)
+                .execute(&mut **tx)
+                .await?;
+        }
         return Ok(id);
     }
     let id = gen_token();
-    sqlx::query("INSERT INTO people (id, name, email) VALUES (?, ?, ?)")
+    sqlx::query("INSERT INTO people (id, name, display_name, email) VALUES (?, ?, ?, ?)")
         .bind(&id)
         .bind(name)
+        .bind(display_name.filter(|s| !s.is_empty()))
         .bind(email)
         .execute(&mut **tx)
         .await?;
     Ok(id)
+}
+
+/// The persons of a new ownership period, together with the period's dates.
+/// The persons are created or reused by e-mail identity (see
+/// [`resolve_person`]); the dates belong to the period, not to the persons.
+pub struct NewPeriod<'a> {
+    pub people: &'a [NewPerson<'a>],
+    pub start_date: &'a str,
+    pub end_date: Option<&'a str>,
+}
+
+/// One person of a new ownership period, identified by name and e-mail.
+pub struct NewPerson<'a> {
+    pub name: &'a str,
+    pub email: &'a str,
+    /// Optional display name of the person. `None` leaves a display name
+    /// that the person already has untouched (creation forms and legacy
+    /// clients do not collect one); `Some` sets it — trimmed, and an empty
+    /// value clears it. Mirrors the semantics of [`resolve_person`].
+    pub display_name: Option<&'a str>,
+}
+
+/// Resolve all persons of a period inside the caller's transaction, in order:
+/// each e-mail creates or reuses a person row (see [`resolve_person`]). The
+/// returned ids mirror the input order.
+async fn resolve_people(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    people: &[NewPerson<'_>],
+) -> Result<Vec<String>, sqlx::Error> {
+    let mut ids = Vec::with_capacity(people.len());
+    for person in people {
+        ids.push(resolve_person(tx, person.name, person.email, person.display_name).await?);
+    }
+    Ok(ids)
 }
 
 // Buildings CRUD
@@ -101,7 +155,7 @@ pub async fn get_building(
     if let Some(building) = building_opt {
         let admins = sqlx::query_as::<_, BuildingAdministrator>(
             r#"
-            SELECT a.id, a.building_id, a.person_id, p.name, p.email, a.created_at
+            SELECT a.id, a.building_id, a.person_id, p.name, p.display_name, p.email, a.created_at
             FROM building_administrators a
             INNER JOIN people p ON p.id = a.person_id
             WHERE a.building_id = ?
@@ -144,17 +198,17 @@ pub async fn create_building(
     create_building_impl(pool, name, description, admin_name, admin_email, None).await
 }
 
-/// Like [`create_building`], but additionally records an initial owner for
-/// the whole building (one entity owns all apartments, see 0005). Passed
-/// through [`NewOwner`], so the same fields as an apartment's first owner
-/// apply; the person is created or reused inside the same transaction.
+/// Like [`create_building`], but additionally records the initial owner(s) for
+/// the whole building (one entity owns all apartments, see 0005). Passed as a
+/// [`NewPeriod`], so the same fields as an apartment's first ownership apply;
+/// the persons are created or reused inside the same transaction.
 pub async fn create_building_with_owner(
     pool: &Db,
     name: &str,
     description: &str,
     admin_name: &str,
     admin_email: &str,
-    initial_owner: &NewOwner<'_>,
+    initial_owner: &NewPeriod<'_>,
 ) -> Result<Building, sqlx::Error> {
     create_building_impl(
         pool,
@@ -173,7 +227,7 @@ async fn create_building_impl(
     description: &str,
     admin_name: &str,
     admin_email: &str,
-    initial_owner: Option<&NewOwner<'_>>,
+    initial_owner: Option<&NewPeriod<'_>>,
 ) -> Result<Building, sqlx::Error> {
     let mut tx = pool.begin().await?;
 
@@ -197,7 +251,7 @@ async fn create_building_impl(
         let admin_id = gen_token();
         // The person comes first (immediate FK); the Ansprechpartner row then
         // references it like every other contact.
-        let person_id = resolve_person(&mut tx, admin_name, admin_email).await?;
+        let person_id = resolve_person(&mut tx, admin_name, admin_email, None).await?;
         sqlx::query(
             r#"
             INSERT INTO building_administrators (id, building_id, person_id)
@@ -211,20 +265,37 @@ async fn create_building_impl(
         .await?;
     }
 
-    // The person comes first (immediate FK); the building-owner period may
-    // precede its building because that FK is DEFERRABLE INITIALLY DEFERRED.
+    // The persons come first (immediate FK to people); the join rows may
+    // precede their period because the building_owners FK is DEFERRABLE
+    // INITIALLY DEFERRED, and the period-required trigger of 0013 demands a
+    // pending join row at period insert time.
     if let Some(owner) = initial_owner {
-        let person_id = resolve_person(&mut tx, owner.name, owner.email).await?;
         let owner_id = gen_token();
+        for (position, person_id) in resolve_people(&mut tx, owner.people)
+            .await?
+            .into_iter()
+            .enumerate()
+        {
+            sqlx::query(
+                r#"
+                INSERT INTO building_owner_people (building_owner_id, person_id, position)
+                VALUES (?, ?, ?)
+                "#,
+            )
+            .bind(&owner_id)
+            .bind(person_id)
+            .bind(position as i64)
+            .execute(&mut *tx)
+            .await?;
+        }
         sqlx::query(
             r#"
-            INSERT INTO building_owners (id, building_id, person_id, start_date, end_date)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO building_owners (id, building_id, start_date, end_date)
+            VALUES (?, ?, ?, ?)
             "#,
         )
         .bind(&owner_id)
         .bind(&building_id)
-        .bind(person_id)
         .bind(owner.start_date)
         .bind(owner.end_date)
         .execute(&mut *tx)
@@ -278,7 +349,7 @@ pub async fn update_building(
         .await?;
         // Re-resolve the person like every other contact edit: a known e-mail
         // reuses (and possibly renames) the person, an unknown one creates it.
-        let person_id = resolve_person(&mut tx, admin_name, admin_email).await?;
+        let person_id = resolve_person(&mut tx, admin_name, admin_email, None).await?;
         match existing {
             Some(admin_id) => {
                 sqlx::query("UPDATE building_administrators SET person_id = ? WHERE id = ?")
@@ -384,38 +455,48 @@ pub async fn get_apartment(pool: &Db, id: &str) -> Result<Option<Apartment>, sql
 /// apartment; the database rejects apartments without any coverage (neither
 /// their own ownership record nor a building owner, see the
 /// `apartments_require_ownership` trigger in 0004/0005).
-pub struct NewOwner<'a> {
-    pub name: &'a str,
-    pub email: &'a str,
-    pub start_date: &'a str,
-    pub end_date: Option<&'a str>,
-}
-
 pub async fn create_apartment(
     pool: &Db,
     building_id: &str,
     name: &str,
     description: &str,
-    initial_owner: &NewOwner<'_>,
+    initial_owner: &NewPeriod<'_>,
 ) -> Result<Apartment, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let id = gen_token();
-
-    // The person comes first (immediate FK); the ownerships FK is DEFERRABLE
-    // INITIALLY DEFERRED, so the first ownership may (and must, see the
-    // trigger above) be inserted before its apartment within the same
-    // transaction. The person insert rolls back with any rejection.
-    let person_id = resolve_person(&mut tx, initial_owner.name, initial_owner.email).await?;
+    // The persons come first (immediate FK to people), then the join rows
+    // (their FK to the not-yet-existing ownership is DEFERRABLE INITIALLY
+    // DEFERRED), then the ownership period: the period-required trigger of
+    // 0013 demands the pending join rows at ownership insert time, and the
+    // ownerships FK is DEFERRABLE INITIALLY DEFERRED, so the first ownership
+    // may (and must, see the trigger above) be inserted before its apartment
+    // within the same transaction. Any rejection rolls everything back.
     let ownership_id = gen_token();
+    for (position, person_id) in resolve_people(&mut tx, initial_owner.people)
+        .await?
+        .into_iter()
+        .enumerate()
+    {
+        sqlx::query(
+            r#"
+            INSERT INTO ownership_people (ownership_id, person_id, position)
+            VALUES (?, ?, ?)
+            "#,
+        )
+        .bind(&ownership_id)
+        .bind(person_id)
+        .bind(position as i64)
+        .execute(&mut *tx)
+        .await?;
+    }
     sqlx::query(
         r#"
-        INSERT INTO ownerships (id, apartment_id, person_id, start_date, end_date)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO ownerships (id, apartment_id, start_date, end_date)
+        VALUES (?, ?, ?, ?)
         "#,
     )
     .bind(&ownership_id)
     .bind(&id)
-    .bind(person_id)
     .bind(initial_owner.start_date)
     .bind(initial_owner.end_date)
     .execute(&mut *tx)
@@ -571,55 +652,126 @@ pub async fn reorder_apartments(
 
 // Ownerships CRUD
 
+/// One joined row of an `ownerships` period and one of its people; the
+/// queries below group the rows by period (see [`ownerships_from_rows`]).
+#[derive(sqlx::FromRow, Debug)]
+struct OwnershipPersonRow {
+    id: String,
+    apartment_id: String,
+    start_date: String,
+    end_date: Option<String>,
+    created_at: String,
+    person_id: String,
+    name: String,
+    display_name: Option<String>,
+    email: String,
+    position: i64,
+}
+
+/// Group joined rows into periods, preserving the query order (periods by
+/// `start_date`/`id`, people by `position`).
+fn ownerships_from_rows(rows: Vec<OwnershipPersonRow>) -> Vec<Ownership> {
+    let mut ownerships: Vec<Ownership> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    for row in rows {
+        let OwnershipPersonRow {
+            id,
+            apartment_id,
+            start_date,
+            end_date,
+            created_at,
+            person_id,
+            name,
+            display_name,
+            email,
+            position,
+        } = row;
+        match index.get(&id).copied() {
+            Some(i) => ownerships[i].people.push(PersonRef {
+                person_id,
+                name,
+                display_name,
+                email,
+                position,
+            }),
+            None => {
+                index.insert(id.clone(), ownerships.len());
+                ownerships.push(Ownership {
+                    id,
+                    apartment_id,
+                    start_date,
+                    end_date,
+                    created_at,
+                    people: vec![PersonRef {
+                        person_id,
+                        name,
+                        display_name,
+                        email,
+                        position,
+                    }],
+                });
+            }
+        }
+    }
+    ownerships
+}
+
 pub async fn list_ownerships(pool: &Db, apartment_id: &str) -> Result<Vec<Ownership>, sqlx::Error> {
-    sqlx::query_as::<_, Ownership>(
+    let rows = sqlx::query_as::<_, OwnershipPersonRow>(
         r#"
-        SELECT o.id, o.apartment_id, o.person_id, p.name, p.email,
-               o.start_date, o.end_date, o.created_at
+        SELECT o.id, o.apartment_id, o.start_date, o.end_date, o.created_at,
+               p.id AS person_id, p.name, p.display_name, p.email, op.position
         FROM ownerships o
-        INNER JOIN people p ON p.id = o.person_id
+        INNER JOIN ownership_people op ON op.ownership_id = o.id
+        INNER JOIN people p ON p.id = op.person_id
         WHERE o.apartment_id = ?
-        ORDER BY o.start_date ASC, p.name ASC
+        ORDER BY o.start_date ASC, o.id ASC, op.position ASC
         "#,
     )
     .bind(apartment_id)
     .fetch_all(pool)
-    .await
+    .await?;
+    Ok(ownerships_from_rows(rows))
 }
 
 pub async fn list_ownerships_for_building(
     pool: &Db,
     building_id: &str,
 ) -> Result<Vec<Ownership>, sqlx::Error> {
-    sqlx::query_as::<_, Ownership>(
+    let rows = sqlx::query_as::<_, OwnershipPersonRow>(
         r#"
-        SELECT o.id, o.apartment_id, o.person_id, p.name, p.email,
-               o.start_date, o.end_date, o.created_at
+        SELECT o.id, o.apartment_id, o.start_date, o.end_date, o.created_at,
+               p.id AS person_id, p.name, p.display_name, p.email, op.position
         FROM ownerships o
-        INNER JOIN people p ON p.id = o.person_id
+        INNER JOIN ownership_people op ON op.ownership_id = o.id
+        INNER JOIN people p ON p.id = op.person_id
         INNER JOIN apartments a ON a.id = o.apartment_id
         WHERE a.building_id = ?
-        ORDER BY o.start_date ASC, p.name ASC
+        ORDER BY o.start_date ASC, o.id ASC, op.position ASC
         "#,
     )
     .bind(building_id)
     .fetch_all(pool)
-    .await
+    .await?;
+    Ok(ownerships_from_rows(rows))
 }
 
 pub async fn get_ownership(pool: &Db, id: &str) -> Result<Option<Ownership>, sqlx::Error> {
-    sqlx::query_as::<_, Ownership>(
+    let rows = sqlx::query_as::<_, OwnershipPersonRow>(
         r#"
-        SELECT o.id, o.apartment_id, o.person_id, p.name, p.email,
-               o.start_date, o.end_date, o.created_at
+        SELECT o.id, o.apartment_id, o.start_date, o.end_date, o.created_at,
+               p.id AS person_id, p.name, p.display_name, p.email, op.position
         FROM ownerships o
-        INNER JOIN people p ON p.id = o.person_id
+        INNER JOIN ownership_people op ON op.ownership_id = o.id
+        INNER JOIN people p ON p.id = op.person_id
         WHERE o.id = ?
+        ORDER BY op.position ASC
         "#,
     )
     .bind(id)
-    .fetch_optional(pool)
-    .await
+    .fetch_all(pool)
+    .await?;
+    Ok(ownerships_from_rows(rows).into_iter().next())
 }
 
 /// The ownership covering `date` (started on or before it and not ended yet),
@@ -629,24 +781,25 @@ pub async fn get_ownership_on(
     apartment_id: &str,
     date: &str,
 ) -> Result<Option<Ownership>, sqlx::Error> {
-    sqlx::query_as::<_, Ownership>(
+    let rows = sqlx::query_as::<_, OwnershipPersonRow>(
         r#"
-        SELECT o.id, o.apartment_id, o.person_id, p.name, p.email,
-               o.start_date, o.end_date, o.created_at
+        SELECT o.id, o.apartment_id, o.start_date, o.end_date, o.created_at,
+               p.id AS person_id, p.name, p.display_name, p.email, op.position
         FROM ownerships o
-        INNER JOIN people p ON p.id = o.person_id
+        INNER JOIN ownership_people op ON op.ownership_id = o.id
+        INNER JOIN people p ON p.id = op.person_id
         WHERE o.apartment_id = ?
           AND o.start_date <= ?
           AND (o.end_date IS NULL OR o.end_date >= ?)
-        ORDER BY o.start_date DESC
-        LIMIT 1
+        ORDER BY o.start_date DESC, op.position ASC
         "#,
     )
     .bind(apartment_id)
     .bind(date)
     .bind(date)
-    .fetch_optional(pool)
-    .await
+    .fetch_all(pool)
+    .await?;
+    Ok(ownerships_from_rows(rows).into_iter().next())
 }
 
 /// The latest end date among the ownership periods of the apartment that
@@ -673,30 +826,30 @@ pub async fn get_ownership_end_before(
     .await
 }
 
+/// Insert a new ownership period with its persons: the join rows come first
+/// (their FK to the not-yet-existing period is DEFERRABLE INITIALLY
+/// DEFERRED), so the period-required trigger of 0013 passes at period insert
+/// time. All changes (including person creation) happen in one transaction: a
+/// chain-tiling or date rejection rolls everything back and leaves no person
+/// without a period behind.
 pub async fn create_ownership(
     pool: &Db,
     apartment_id: &str,
-    name: &str,
-    email: &str,
-    start_date: &str,
-    end_date: Option<&str>,
+    period: &NewPeriod<'_>,
 ) -> Result<Ownership, sqlx::Error> {
     let mut tx = pool.begin().await?;
-    // The person insert is part of the transaction: a chain-tiling or date
-    // rejection rolls it back and leaves no person without a period behind.
-    let person_id = resolve_person(&mut tx, name, email).await?;
     let id = gen_token();
+    insert_period_with_people(&mut tx, PeriodPeopleTable::Ownership, &id, period).await?;
     sqlx::query(
         r#"
-        INSERT INTO ownerships (id, apartment_id, person_id, start_date, end_date)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO ownerships (id, apartment_id, start_date, end_date)
+        VALUES (?, ?, ?, ?)
         "#,
     )
     .bind(&id)
     .bind(apartment_id)
-    .bind(person_id)
-    .bind(start_date)
-    .bind(end_date)
+    .bind(period.start_date)
+    .bind(period.end_date)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -704,6 +857,47 @@ pub async fn create_ownership(
     get_ownership(pool, &id)
         .await
         .map(|o| o.expect("ownership just inserted"))
+}
+
+/// The two join tables that link a period to its persons; the insert and
+/// replace helpers below only differ in the table name, so they select it
+/// explicitly instead of interpolating SQL.
+#[derive(Clone, Copy)]
+enum PeriodPeopleTable {
+    Ownership,
+    BuildingOwner,
+}
+
+/// Insert the join rows of a new period (before the period row itself, whose
+/// period-required trigger demands them) and resolve their persons. Shared by
+/// the apartment-ownership and building-owner paths.
+async fn insert_period_with_people(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    table: PeriodPeopleTable,
+    period_id: &str,
+    period: &NewPeriod<'_>,
+) -> Result<(), sqlx::Error> {
+    let sql = match table {
+        PeriodPeopleTable::Ownership => {
+            "INSERT INTO ownership_people (ownership_id, person_id, position) VALUES (?, ?, ?)"
+        }
+        PeriodPeopleTable::BuildingOwner => {
+            "INSERT INTO building_owner_people (building_owner_id, person_id, position) VALUES (?, ?, ?)"
+        }
+    };
+    for (position, person_id) in resolve_people(tx, period.people)
+        .await?
+        .into_iter()
+        .enumerate()
+    {
+        sqlx::query(sql)
+            .bind(period_id)
+            .bind(person_id)
+            .bind(position as i64)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
 }
 
 /// Identifies the previous period that a new period replaces: its id and the
@@ -723,10 +917,7 @@ pub async fn create_ownership_closing_previous(
     pool: &Db,
     apartment_id: &str,
     previous: PreviousPeriod<'_>,
-    name: &str,
-    email: &str,
-    start_date: &str,
-    end_date: Option<&str>,
+    period: &NewPeriod<'_>,
 ) -> Result<Ownership, sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("UPDATE ownerships SET end_date = ? WHERE id = ?")
@@ -734,19 +925,18 @@ pub async fn create_ownership_closing_previous(
         .bind(previous.id)
         .execute(&mut *tx)
         .await?;
-    let person_id = resolve_person(&mut tx, name, email).await?;
     let id = gen_token();
+    insert_period_with_people(&mut tx, PeriodPeopleTable::Ownership, &id, period).await?;
     sqlx::query(
         r#"
-        INSERT INTO ownerships (id, apartment_id, person_id, start_date, end_date)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO ownerships (id, apartment_id, start_date, end_date)
+        VALUES (?, ?, ?, ?)
         "#,
     )
     .bind(&id)
     .bind(apartment_id)
-    .bind(person_id)
-    .bind(start_date)
-    .bind(end_date)
+    .bind(period.start_date)
+    .bind(period.end_date)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -756,30 +946,28 @@ pub async fn create_ownership_closing_previous(
         .map(|o| o.expect("ownership just inserted"))
 }
 
-/// Update an ownership period. Name and e-mail re-resolve the person (by
-/// e-mail), so the edit form can both correct the person's contact data and
-/// move the period to another person (new e-mail); the period's dates are
-/// stored on the row itself.
+/// Replace a period's person set with the submitted one. The new join rows
+/// are inserted before the old ones are removed, so the last-person guard of
+/// 0013 only fires when the new set is empty (which is exactly the rejection
+/// we want). Name and e-mail re-resolve each person (by e-mail), so the edit
+/// form can both correct a person's contact data and change who owns the
+/// period; the period's dates are stored on the row itself.
 pub async fn update_ownership(
     pool: &Db,
     id: &str,
-    name: &str,
-    email: &str,
-    start_date: &str,
-    end_date: Option<&str>,
+    period: &NewPeriod<'_>,
 ) -> Result<Ownership, sqlx::Error> {
     let mut tx = pool.begin().await?;
-    let person_id = resolve_person(&mut tx, name, email).await?;
+    replace_period_people(&mut tx, PeriodPeopleTable::Ownership, id, period).await?;
     sqlx::query(
         r#"
         UPDATE ownerships
-        SET person_id = ?, start_date = ?, end_date = ?
+        SET start_date = ?, end_date = ?
         WHERE id = ?
         "#,
     )
-    .bind(person_id)
-    .bind(start_date)
-    .bind(end_date)
+    .bind(period.start_date)
+    .bind(period.end_date)
     .bind(id)
     .execute(&mut *tx)
     .await?;
@@ -788,6 +976,52 @@ pub async fn update_ownership(
     get_ownership(pool, id)
         .await
         .map(|o| o.expect("ownership just updated"))
+}
+
+/// Resolve the period's persons and replace the join rows: insert the new
+/// ones (ignoring duplicates), then delete the rows whose person is no longer
+/// in the set. Shared by the apartment-ownership and building-owner paths.
+async fn replace_period_people(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    table: PeriodPeopleTable,
+    period_id: &str,
+    period: &NewPeriod<'_>,
+) -> Result<(), sqlx::Error> {
+    let (insert_sql, select_sql, delete_sql) = match table {
+        PeriodPeopleTable::Ownership => (
+            "INSERT INTO ownership_people (ownership_id, person_id, position) VALUES (?, ?, ?) ON CONFLICT(ownership_id, person_id) DO UPDATE SET position = excluded.position",
+            "SELECT person_id FROM ownership_people WHERE ownership_id = ?",
+            "DELETE FROM ownership_people WHERE ownership_id = ? AND person_id = ?",
+        ),
+        PeriodPeopleTable::BuildingOwner => (
+            "INSERT INTO building_owner_people (building_owner_id, person_id, position) VALUES (?, ?, ?) ON CONFLICT(building_owner_id, person_id) DO UPDATE SET position = excluded.position",
+            "SELECT person_id FROM building_owner_people WHERE building_owner_id = ?",
+            "DELETE FROM building_owner_people WHERE building_owner_id = ? AND person_id = ?",
+        ),
+    };
+    let ids = resolve_people(tx, period.people).await?;
+    for (position, person_id) in ids.iter().enumerate() {
+        sqlx::query(insert_sql)
+            .bind(period_id)
+            .bind(person_id)
+            .bind(position as i64)
+            .execute(&mut **tx)
+            .await?;
+    }
+    let existing: Vec<String> = sqlx::query_scalar(select_sql)
+        .bind(period_id)
+        .fetch_all(&mut **tx)
+        .await?;
+    for person_id in existing {
+        if !ids.contains(&person_id) {
+            sqlx::query(delete_sql)
+                .bind(period_id)
+                .bind(&person_id)
+                .execute(&mut **tx)
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 pub async fn delete_ownership(pool: &Db, id: &str) -> Result<bool, sqlx::Error> {
@@ -800,24 +1034,90 @@ pub async fn delete_ownership(pool: &Db, id: &str) -> Result<bool, sqlx::Error> 
 
 // Building owners CRUD
 
+/// One joined row of a `building_owners` period and one of its people; the
+/// queries below group the rows by period (see [`building_owners_from_rows`]).
+#[derive(sqlx::FromRow, Debug)]
+struct BuildingOwnerPersonRow {
+    id: String,
+    building_id: String,
+    start_date: String,
+    end_date: Option<String>,
+    created_at: String,
+    person_id: String,
+    name: String,
+    display_name: Option<String>,
+    email: String,
+    position: i64,
+}
+
+/// Group joined rows into periods, preserving the query order (periods by
+/// `start_date`/`id`, people by `position`).
+fn building_owners_from_rows(rows: Vec<BuildingOwnerPersonRow>) -> Vec<BuildingOwner> {
+    let mut owners: Vec<BuildingOwner> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    for row in rows {
+        let BuildingOwnerPersonRow {
+            id,
+            building_id,
+            start_date,
+            end_date,
+            created_at,
+            person_id,
+            name,
+            display_name,
+            email,
+            position,
+        } = row;
+        match index.get(&id).copied() {
+            Some(i) => owners[i].people.push(PersonRef {
+                person_id,
+                name,
+                display_name,
+                email,
+                position,
+            }),
+            None => {
+                index.insert(id.clone(), owners.len());
+                owners.push(BuildingOwner {
+                    id,
+                    building_id,
+                    start_date,
+                    end_date,
+                    created_at,
+                    people: vec![PersonRef {
+                        person_id,
+                        name,
+                        display_name,
+                        email,
+                        position,
+                    }],
+                });
+            }
+        }
+    }
+    owners
+}
+
 /// All building-owner periods of a building, oldest first.
 pub async fn list_building_owners(
     pool: &Db,
     building_id: &str,
 ) -> Result<Vec<BuildingOwner>, sqlx::Error> {
-    sqlx::query_as::<_, BuildingOwner>(
+    let rows = sqlx::query_as::<_, BuildingOwnerPersonRow>(
         r#"
-        SELECT o.id, o.building_id, o.person_id, p.name, p.email,
-               o.start_date, o.end_date, o.created_at
+        SELECT o.id, o.building_id, o.start_date, o.end_date, o.created_at,
+               p.id AS person_id, p.name, p.display_name, p.email, bop.position
         FROM building_owners o
-        INNER JOIN people p ON p.id = o.person_id
+        INNER JOIN building_owner_people bop ON bop.building_owner_id = o.id
+        INNER JOIN people p ON p.id = bop.person_id
         WHERE o.building_id = ?
-        ORDER BY o.start_date ASC, p.name ASC
+        ORDER BY o.start_date ASC, o.id ASC, bop.position ASC
         "#,
     )
     .bind(building_id)
     .fetch_all(pool)
-    .await
+    .await?;
+    Ok(building_owners_from_rows(rows))
 }
 
 /// The building-owner period covering the current date, if any.
@@ -825,37 +1125,41 @@ pub async fn get_current_building_owner(
     pool: &Db,
     building_id: &str,
 ) -> Result<Option<BuildingOwner>, sqlx::Error> {
-    sqlx::query_as::<_, BuildingOwner>(
+    let rows = sqlx::query_as::<_, BuildingOwnerPersonRow>(
         r#"
-        SELECT o.id, o.building_id, o.person_id, p.name, p.email,
-               o.start_date, o.end_date, o.created_at
+        SELECT o.id, o.building_id, o.start_date, o.end_date, o.created_at,
+               p.id AS person_id, p.name, p.display_name, p.email, bop.position
         FROM building_owners o
-        INNER JOIN people p ON p.id = o.person_id
+        INNER JOIN building_owner_people bop ON bop.building_owner_id = o.id
+        INNER JOIN people p ON p.id = bop.person_id
         WHERE o.building_id = ?
           AND o.start_date <= date('now', 'localtime')
           AND (o.end_date IS NULL OR o.end_date >= date('now', 'localtime'))
-        ORDER BY o.start_date DESC
-        LIMIT 1
+        ORDER BY o.start_date DESC, bop.position ASC
         "#,
     )
     .bind(building_id)
-    .fetch_optional(pool)
-    .await
+    .fetch_all(pool)
+    .await?;
+    Ok(building_owners_from_rows(rows).into_iter().next())
 }
 
 pub async fn get_building_owner(pool: &Db, id: &str) -> Result<Option<BuildingOwner>, sqlx::Error> {
-    sqlx::query_as::<_, BuildingOwner>(
+    let rows = sqlx::query_as::<_, BuildingOwnerPersonRow>(
         r#"
-        SELECT o.id, o.building_id, o.person_id, p.name, p.email,
-               o.start_date, o.end_date, o.created_at
+        SELECT o.id, o.building_id, o.start_date, o.end_date, o.created_at,
+               p.id AS person_id, p.name, p.display_name, p.email, bop.position
         FROM building_owners o
-        INNER JOIN people p ON p.id = o.person_id
+        INNER JOIN building_owner_people bop ON bop.building_owner_id = o.id
+        INNER JOIN people p ON p.id = bop.person_id
         WHERE o.id = ?
+        ORDER BY bop.position ASC
         "#,
     )
     .bind(id)
-    .fetch_optional(pool)
-    .await
+    .fetch_all(pool)
+    .await?;
+    Ok(building_owners_from_rows(rows).into_iter().next())
 }
 
 /// The building-owner period covering `date` (started on or before it and not
@@ -866,24 +1170,25 @@ pub async fn get_building_owner_on(
     building_id: &str,
     date: &str,
 ) -> Result<Option<BuildingOwner>, sqlx::Error> {
-    sqlx::query_as::<_, BuildingOwner>(
+    let rows = sqlx::query_as::<_, BuildingOwnerPersonRow>(
         r#"
-        SELECT o.id, o.building_id, o.person_id, p.name, p.email,
-               o.start_date, o.end_date, o.created_at
+        SELECT o.id, o.building_id, o.start_date, o.end_date, o.created_at,
+               p.id AS person_id, p.name, p.display_name, p.email, bop.position
         FROM building_owners o
-        INNER JOIN people p ON p.id = o.person_id
+        INNER JOIN building_owner_people bop ON bop.building_owner_id = o.id
+        INNER JOIN people p ON p.id = bop.person_id
         WHERE o.building_id = ?
           AND o.start_date <= ?
           AND (o.end_date IS NULL OR o.end_date >= ?)
-        ORDER BY o.start_date DESC
-        LIMIT 1
+        ORDER BY o.start_date DESC, bop.position ASC
         "#,
     )
     .bind(building_id)
     .bind(date)
     .bind(date)
-    .fetch_optional(pool)
-    .await
+    .fetch_all(pool)
+    .await?;
+    Ok(building_owners_from_rows(rows).into_iter().next())
 }
 
 /// The latest end date among the building-owner periods that ended strictly
@@ -937,27 +1242,24 @@ pub async fn building_has_apartments_depending_on_building_owner(
 pub async fn create_building_owner(
     pool: &Db,
     building_id: &str,
-    name: &str,
-    email: &str,
-    start_date: &str,
-    end_date: Option<&str>,
+    period: &NewPeriod<'_>,
 ) -> Result<BuildingOwner, sqlx::Error> {
     let mut tx = pool.begin().await?;
-    // The person insert is part of the transaction: a chain-tiling or date
-    // rejection rolls it back and leaves no person without a period behind.
-    let person_id = resolve_person(&mut tx, name, email).await?;
     let id = gen_token();
+    // Join rows first (deferred FK), then the period: the required-person
+    // trigger of 0013 demands the pending rows. Any rejection rolls back the
+    // person creation with the transaction.
+    insert_period_with_people(&mut tx, PeriodPeopleTable::BuildingOwner, &id, period).await?;
     sqlx::query(
         r#"
-        INSERT INTO building_owners (id, building_id, person_id, start_date, end_date)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO building_owners (id, building_id, start_date, end_date)
+        VALUES (?, ?, ?, ?)
         "#,
     )
     .bind(&id)
     .bind(building_id)
-    .bind(person_id)
-    .bind(start_date)
-    .bind(end_date)
+    .bind(period.start_date)
+    .bind(period.end_date)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -976,10 +1278,7 @@ pub async fn create_building_owner_closing_previous(
     pool: &Db,
     building_id: &str,
     previous: PreviousPeriod<'_>,
-    name: &str,
-    email: &str,
-    start_date: &str,
-    end_date: Option<&str>,
+    period: &NewPeriod<'_>,
 ) -> Result<BuildingOwner, sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("UPDATE building_owners SET end_date = ? WHERE id = ?")
@@ -987,19 +1286,18 @@ pub async fn create_building_owner_closing_previous(
         .bind(previous.id)
         .execute(&mut *tx)
         .await?;
-    let person_id = resolve_person(&mut tx, name, email).await?;
     let id = gen_token();
+    insert_period_with_people(&mut tx, PeriodPeopleTable::BuildingOwner, &id, period).await?;
     sqlx::query(
         r#"
-        INSERT INTO building_owners (id, building_id, person_id, start_date, end_date)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO building_owners (id, building_id, start_date, end_date)
+        VALUES (?, ?, ?, ?)
         "#,
     )
     .bind(&id)
     .bind(building_id)
-    .bind(person_id)
-    .bind(start_date)
-    .bind(end_date)
+    .bind(period.start_date)
+    .bind(period.end_date)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -1009,28 +1307,24 @@ pub async fn create_building_owner_closing_previous(
         .map(|o| o.expect("building owner just inserted"))
 }
 
-/// Update a building-owner period; person resolution behaves exactly like
-/// [`update_ownership`].
+/// Update a building-owner period; the person-set replacement behaves exactly
+/// like [`update_ownership`].
 pub async fn update_building_owner(
     pool: &Db,
     id: &str,
-    name: &str,
-    email: &str,
-    start_date: &str,
-    end_date: Option<&str>,
+    period: &NewPeriod<'_>,
 ) -> Result<BuildingOwner, sqlx::Error> {
     let mut tx = pool.begin().await?;
-    let person_id = resolve_person(&mut tx, name, email).await?;
+    replace_period_people(&mut tx, PeriodPeopleTable::BuildingOwner, id, period).await?;
     sqlx::query(
         r#"
         UPDATE building_owners
-        SET person_id = ?, start_date = ?, end_date = ?
+        SET start_date = ?, end_date = ?
         WHERE id = ?
         "#,
     )
-    .bind(person_id)
-    .bind(start_date)
-    .bind(end_date)
+    .bind(period.start_date)
+    .bind(period.end_date)
     .bind(id)
     .execute(&mut *tx)
     .await?;
@@ -1076,7 +1370,7 @@ pub async fn delete_building_owner(pool: &Db, id: &str) -> Result<bool, sqlx::Er
 pub async fn list_tenancies(pool: &Db, apartment_id: &str) -> Result<Vec<Tenancy>, sqlx::Error> {
     sqlx::query_as::<_, Tenancy>(
         r#"
-        SELECT t.id, t.apartment_id, t.person_id, p.name, p.email,
+        SELECT t.id, t.apartment_id, t.person_id, p.name, p.display_name, p.email,
                t.start_date, t.end_date, t.created_at
         FROM tenancies t
         INNER JOIN people p ON p.id = t.person_id
@@ -1095,7 +1389,7 @@ pub async fn list_tenancies_for_building(
 ) -> Result<Vec<Tenancy>, sqlx::Error> {
     sqlx::query_as::<_, Tenancy>(
         r#"
-        SELECT t.id, t.apartment_id, t.person_id, p.name, p.email,
+        SELECT t.id, t.apartment_id, t.person_id, p.name, p.display_name, p.email,
                t.start_date, t.end_date, t.created_at
         FROM tenancies t
         INNER JOIN people p ON p.id = t.person_id
@@ -1118,7 +1412,7 @@ pub async fn get_tenancy_on(
 ) -> Result<Option<Tenancy>, sqlx::Error> {
     sqlx::query_as::<_, Tenancy>(
         r#"
-        SELECT t.id, t.apartment_id, t.person_id, p.name, p.email,
+        SELECT t.id, t.apartment_id, t.person_id, p.name, p.display_name, p.email,
                t.start_date, t.end_date, t.created_at
         FROM tenancies t
         INNER JOIN people p ON p.id = t.person_id
@@ -1139,7 +1433,7 @@ pub async fn get_tenancy_on(
 pub async fn get_tenancy(pool: &Db, id: &str) -> Result<Option<Tenancy>, sqlx::Error> {
     sqlx::query_as::<_, Tenancy>(
         r#"
-        SELECT t.id, t.apartment_id, t.person_id, p.name, p.email,
+        SELECT t.id, t.apartment_id, t.person_id, p.name, p.display_name, p.email,
                t.start_date, t.end_date, t.created_at
         FROM tenancies t
         INNER JOIN people p ON p.id = t.person_id
@@ -1162,7 +1456,9 @@ pub async fn create_tenancy(
     let mut tx = pool.begin().await?;
     // The person insert is part of the transaction: an overlap or date
     // rejection rolls it back and leaves no person without a period behind.
-    let person_id = resolve_person(&mut tx, name, email).await?;
+    // Tenancy creation forms do not collect a display name, so an existing
+    // one is left untouched.
+    let person_id = resolve_person(&mut tx, name, email, None).await?;
     let id = gen_token();
     sqlx::query(
         r#"
@@ -1204,7 +1500,7 @@ pub async fn create_tenancy_closing_previous(
         .bind(previous.id)
         .execute(&mut *tx)
         .await?;
-    let person_id = resolve_person(&mut tx, name, email).await?;
+    let person_id = resolve_person(&mut tx, name, email, None).await?;
     let id = gen_token();
     sqlx::query(
         r#"
@@ -1227,17 +1523,20 @@ pub async fn create_tenancy_closing_previous(
 }
 
 /// Update a tenancy; person resolution behaves exactly like
-/// [`update_ownership`] (identity by e-mail, name sync).
+/// [`update_ownership`] (identity by e-mail, name sync). The optional
+/// `display_name` follows [`resolve_person`]: `None` leaves an existing
+/// display name untouched, `Some` sets it (empty clears).
 pub async fn update_tenancy(
     pool: &Db,
     id: &str,
     name: &str,
     email: &str,
+    display_name: Option<&str>,
     start_date: &str,
     end_date: Option<&str>,
 ) -> Result<Tenancy, sqlx::Error> {
     let mut tx = pool.begin().await?;
-    let person_id = resolve_person(&mut tx, name, email).await?;
+    let person_id = resolve_person(&mut tx, name, email, display_name).await?;
     sqlx::query(
         r#"
         UPDATE tenancies
@@ -1271,7 +1570,7 @@ pub async fn delete_tenancy(pool: &Db, id: &str) -> Result<bool, sqlx::Error> {
 pub async fn get_person(pool: &Db, id: &str) -> Result<Option<Person>, sqlx::Error> {
     sqlx::query_as::<_, Person>(
         r#"
-        SELECT id, name, email, created_at
+        SELECT id, name, display_name, email, created_at
         FROM people
         WHERE id = ?
         "#,
@@ -1285,15 +1584,19 @@ pub async fn get_person(pool: &Db, id: &str) -> Result<Option<Person>, sqlx::Err
 /// person's identity: an address that already belongs to another person is
 /// rejected by the `people_email_unique_*` triggers of 0009 with a German
 /// message (shown inline on the person page), like every other database rule.
-/// Name and e-mail are stored trimmed, mirroring [`resolve_person`].
+/// Name, e-mail and display name are stored trimmed, mirroring
+/// [`resolve_person`]; an empty display name is stored as NULL (unset).
 pub async fn update_person(
     pool: &Db,
     id: &str,
     name: &str,
+    display_name: Option<&str>,
     email: &str,
 ) -> Result<Person, sqlx::Error> {
-    let res = sqlx::query("UPDATE people SET name = ?, email = ? WHERE id = ?")
+    let display_name = display_name.map(str::trim).filter(|s| !s.is_empty());
+    let res = sqlx::query("UPDATE people SET name = ?, display_name = ?, email = ? WHERE id = ?")
         .bind(name.trim())
+        .bind(display_name)
         .bind(email.trim())
         .bind(id)
         .execute(pool)
@@ -1329,14 +1632,16 @@ pub async fn list_person_roles(
             UNION ALL
             SELECT p.id, p.name, p.email, 'building_owner',
                    b.id, b.name, NULL, NULL, bo.start_date, bo.end_date
-            FROM building_owners bo
-            INNER JOIN people p ON p.id = bo.person_id
+            FROM building_owner_people bop
+            INNER JOIN people p ON p.id = bop.person_id
+            INNER JOIN building_owners bo ON bo.id = bop.building_owner_id
             INNER JOIN buildings b ON b.id = bo.building_id
             UNION ALL
             SELECT p.id, p.name, p.email, 'apartment_owner',
                    b.id, b.name, a.id, a.name, o.start_date, o.end_date
-            FROM ownerships o
-            INNER JOIN people p ON p.id = o.person_id
+            FROM ownership_people op
+            INNER JOIN people p ON p.id = op.person_id
+            INNER JOIN ownerships o ON o.id = op.ownership_id
             INNER JOIN apartments a ON a.id = o.apartment_id
             INNER JOIN buildings b ON b.id = a.building_id
             UNION ALL
@@ -1480,9 +1785,12 @@ mod tests {
             &building.id,
             "EG links",
             "Ground floor left",
-            &NewOwner {
-                name: "Alice",
-                email: "alice@example.com",
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Alice",
+                    email: "alice@example.com",
+                    display_name: None,
+                }],
                 start_date: "2023-01-01",
                 end_date: Some("2023-12-31"),
             },
@@ -1504,10 +1812,22 @@ mod tests {
 
         // The apartment was created with its first ownership; the next
         // ownership must tile the chain (2024-01-01 follows the 2023 period).
-        let o = create_ownership(&pool, &apt.id, "Bob", "bob@example.com", "2024-01-01", None)
-            .await
-            .expect("create ownership");
-        assert_eq!(o.name, "Bob");
+        let o = create_ownership(
+            &pool,
+            &apt.id,
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Bob",
+                    email: "bob@example.com",
+                    display_name: None,
+                }],
+                start_date: "2024-01-01",
+                end_date: None,
+            },
+        )
+        .await
+        .expect("create ownership");
+        assert_eq!(o.people[0].name, "Bob");
         let o_list = list_ownerships(&pool, &apt.id)
             .await
             .expect("list ownerships");
@@ -1515,10 +1835,15 @@ mod tests {
         let o2 = update_ownership(
             &pool,
             &o.id,
-            "Bobby",
-            "bobby@example.com",
-            "2024-01-01",
-            Some("2024-12-31"),
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Bobby",
+                    email: "bobby@example.com",
+                    display_name: None,
+                }],
+                start_date: "2024-01-01",
+                end_date: Some("2024-12-31"),
+            },
         )
         .await
         .expect("update ownership");
@@ -1606,11 +1931,12 @@ mod tests {
             &building.id,
             "EG",
             "",
-            &NewOwner {
-                name: "Alice",
-                email: "alice@example.com",
-                // A closed, past period so the "last ownership" guard (and
-                // not the current-date guard) is the one that fires.
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Alice",
+                    email: "alice@example.com",
+                    display_name: None,
+                }],
                 start_date: "2024-01-01",
                 end_date: Some("2024-12-31"),
             },
@@ -1671,9 +1997,12 @@ mod tests {
                 &building.id,
                 "EG",
                 "",
-                &NewOwner {
-                    name: " ",
-                    email: "a@b.de",
+                &NewPeriod {
+                    people: &[NewPerson {
+                        name: " ",
+                        email: "a@b.de",
+                        display_name: None,
+                    }],
                     start_date: "2024-01-01",
                     end_date: None,
                 },
@@ -1688,9 +2017,12 @@ mod tests {
                 &building.id,
                 &"y".repeat(31),
                 "",
-                &NewOwner {
-                    name: "Bob",
-                    email: "a@b.de",
+                &NewPeriod {
+                    people: &[NewPerson {
+                        name: "Bob",
+                        email: "a@b.de",
+                        display_name: None,
+                    }],
                     start_date: "2024-01-01",
                     end_date: None,
                 },
@@ -1705,9 +2037,12 @@ mod tests {
                 &building.id,
                 "EG",
                 "",
-                &NewOwner {
-                    name: "Bob",
-                    email: "bob.example.com",
+                &NewPeriod {
+                    people: &[NewPerson {
+                        name: "Bob",
+                        email: "bob.example.com",
+                        display_name: None,
+                    }],
                     start_date: "2024-01-01",
                     end_date: None,
                 },
@@ -1722,9 +2057,12 @@ mod tests {
                 &building.id,
                 "EG",
                 "",
-                &NewOwner {
-                    name: "Bob",
-                    email: "bob@example.com",
+                &NewPeriod {
+                    people: &[NewPerson {
+                        name: "Bob",
+                        email: "bob@example.com",
+                        display_name: None,
+                    }],
                     start_date: "2024-13-01",
                     end_date: None,
                 },
@@ -1739,9 +2077,12 @@ mod tests {
                 &building.id,
                 "EG",
                 "",
-                &NewOwner {
-                    name: "Bob",
-                    email: "bob@example.com",
+                &NewPeriod {
+                    people: &[NewPerson {
+                        name: "Bob",
+                        email: "bob@example.com",
+                        display_name: None,
+                    }],
                     start_date: "2024-02-01",
                     end_date: Some("2024-01-01"),
                 },
@@ -1778,12 +2119,12 @@ mod tests {
             &building.id,
             "EG",
             "",
-            &NewOwner {
-                name: "Ada",
-                email: "ada@example.com",
-                // Past, closed periods so the chain does not cover today: the
-                // delete guards tested here are `guard_middle`/`guard_last`
-                // (0011's current-date guard is covered by the e2e tests).
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Ada",
+                    email: "ada@example.com",
+                    display_name: None,
+                }],
                 start_date: "2022-01-01",
                 end_date: Some("2022-06-30"),
             },
@@ -1808,25 +2149,54 @@ mod tests {
         // Overlapping the existing period is rejected.
         reject(
             "ERR_OWNERSHIP_OVERLAP",
-            create_ownership(&pool, &apt.id, "Bo", "bo@example.com", "2022-06-01", None)
-                .await
-                .expect_err("overlap must be rejected"),
+            create_ownership(
+                &pool,
+                &apt.id,
+                &NewPeriod {
+                    people: &[NewPerson {
+                        name: "Bo",
+                        email: "bo@example.com",
+                        display_name: None,
+                    }],
+                    start_date: "2022-06-01",
+                    end_date: None,
+                },
+            )
+            .await
+            .expect_err("overlap must be rejected"),
         );
         // A gap after the previous period is rejected.
         reject(
             "ERR_OWNERSHIP_GAP_NEXT_START",
-            create_ownership(&pool, &apt.id, "Bo", "bo@example.com", "2022-07-02", None)
-                .await
-                .expect_err("gap must be rejected"),
+            create_ownership(
+                &pool,
+                &apt.id,
+                &NewPeriod {
+                    people: &[NewPerson {
+                        name: "Bo",
+                        email: "bo@example.com",
+                        display_name: None,
+                    }],
+                    start_date: "2022-07-02",
+                    end_date: None,
+                },
+            )
+            .await
+            .expect_err("gap must be rejected"),
         );
         // A tiled continuation is accepted.
         let bo = create_ownership(
             &pool,
             &apt.id,
-            "Bo",
-            "bo@example.com",
-            "2022-07-01",
-            Some("2022-12-31"),
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Bo",
+                    email: "bo@example.com",
+                    display_name: None,
+                }],
+                start_date: "2022-07-01",
+                end_date: Some("2022-12-31"),
+            },
         )
         .await
         .expect("tiled continuation");
@@ -1834,10 +2204,15 @@ mod tests {
         create_ownership(
             &pool,
             &apt.id,
-            "Cy",
-            "cy@example.com",
-            "2023-01-01",
-            Some("2023-12-31"),
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Cy",
+                    email: "cy@example.com",
+                    display_name: None,
+                }],
+                start_date: "2023-01-01",
+                end_date: Some("2023-12-31"),
+            },
         )
         .await
         .expect("tiled successor");
@@ -1848,10 +2223,15 @@ mod tests {
             update_ownership(
                 &pool,
                 &bo.id,
-                "Bo",
-                "bo@example.com",
-                "2022-07-02",
-                Some("2022-12-31"),
+                &NewPeriod {
+                    people: &[NewPerson {
+                        name: "Bo",
+                        email: "bo@example.com",
+                        display_name: None,
+                    }],
+                    start_date: "2022-07-02",
+                    end_date: Some("2022-12-31"),
+                },
             )
             .await
             .expect_err("gap update must be rejected"),
@@ -1862,10 +2242,15 @@ mod tests {
             update_ownership(
                 &pool,
                 &bo.id,
-                "Bo",
-                "bo@example.com",
-                "2022-06-01",
-                Some("2022-12-31"),
+                &NewPeriod {
+                    people: &[NewPerson {
+                        name: "Bo",
+                        email: "bo@example.com",
+                        display_name: None,
+                    }],
+                    start_date: "2022-06-01",
+                    end_date: Some("2022-12-31"),
+                },
             )
             .await
             .expect_err("overlap update must be rejected"),
@@ -1883,7 +2268,7 @@ mod tests {
             .await
             .expect("list ownerships")
             .into_iter()
-            .find(|o| o.name == "Cy")
+            .find(|o| o.people.iter().any(|p| p.name == "Cy"))
             .expect("Cy");
         assert!(delete_ownership(&pool, &cy.id)
             .await
@@ -1918,9 +2303,12 @@ mod tests {
             &building.id,
             "EG",
             "",
-            &NewOwner {
-                name: "Alice",
-                email: "alice@example.com",
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Alice",
+                    email: "alice@example.com",
+                    display_name: None,
+                }],
                 start_date: "2024-01-01",
                 end_date: None,
             },
@@ -1974,6 +2362,7 @@ mod tests {
             &karl.id,
             "Karl",
             "karl@example.com",
+            None,
             "2026-06-01",
             None,
         )
@@ -2000,21 +2389,57 @@ mod tests {
             .await
             .expect("create building");
 
-        let owner = || NewOwner {
-            name: "Alice",
-            email: "alice@example.com",
-            start_date: "2023-01-01",
-            end_date: Some("2023-12-31"),
-        };
-        let a = create_apartment(&pool, &building.id, "Erdgeschoss", "", &owner())
-            .await
-            .expect("create apartment");
-        let b = create_apartment(&pool, &building.id, "Obergeschoss", "", &owner())
-            .await
-            .expect("create apartment");
-        let c = create_apartment(&pool, &building.id, "Dachgeschoss", "", &owner())
-            .await
-            .expect("create apartment");
+        let a = create_apartment(
+            &pool,
+            &building.id,
+            "Erdgeschoss",
+            "",
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Alice",
+                    email: "alice@example.com",
+                    display_name: None,
+                }],
+                start_date: "2023-01-01",
+                end_date: Some("2023-12-31"),
+            },
+        )
+        .await
+        .expect("create apartment");
+        let b = create_apartment(
+            &pool,
+            &building.id,
+            "Obergeschoss",
+            "",
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Alice",
+                    email: "alice@example.com",
+                    display_name: None,
+                }],
+                start_date: "2023-01-01",
+                end_date: Some("2023-12-31"),
+            },
+        )
+        .await
+        .expect("create apartment");
+        let c = create_apartment(
+            &pool,
+            &building.id,
+            "Dachgeschoss",
+            "",
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Alice",
+                    email: "alice@example.com",
+                    display_name: None,
+                }],
+                start_date: "2023-01-01",
+                end_date: Some("2023-12-31"),
+            },
+        )
+        .await
+        .expect("create apartment");
 
         // New apartments are appended in creation order.
         let initial: Vec<String> = list_apartments(&pool, &building.id)
@@ -2056,18 +2481,40 @@ mod tests {
         let building = create_building(&pool, "Test Building", "", "Alice", "alice@example.com")
             .await
             .expect("create building");
-        let owner = NewOwner {
-            name: "Alice",
-            email: "alice@example.com",
-            start_date: "2023-01-01",
-            end_date: Some("2023-12-31"),
-        };
-        let a = create_apartment(&pool, &building.id, "Erdgeschoss", "", &owner)
-            .await
-            .expect("create apartment");
-        let b = create_apartment(&pool, &building.id, "Obergeschoss", "", &owner)
-            .await
-            .expect("create apartment");
+        let a = create_apartment(
+            &pool,
+            &building.id,
+            "Erdgeschoss",
+            "",
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Alice",
+                    email: "alice@example.com",
+                    display_name: None,
+                }],
+                start_date: "2023-01-01",
+                end_date: Some("2023-12-31"),
+            },
+        )
+        .await
+        .expect("create apartment");
+        let b = create_apartment(
+            &pool,
+            &building.id,
+            "Obergeschoss",
+            "",
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Alice",
+                    email: "alice@example.com",
+                    display_name: None,
+                }],
+                start_date: "2023-01-01",
+                end_date: Some("2023-12-31"),
+            },
+        )
+        .await
+        .expect("create apartment");
 
         // An id from another building.
         assert!(
@@ -2115,24 +2562,34 @@ mod tests {
         let first = create_building_owner(
             &pool,
             &building.id,
-            "Deutsche Wohnbau SE",
-            "service@deutsche-wohnbau.example",
-            "1995-01-01",
-            Some("2000-12-31"),
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Deutsche Wohnbau SE",
+                    email: "service@deutsche-wohnbau.example",
+                    display_name: None,
+                }],
+                start_date: "1995-01-01",
+                end_date: Some("2000-12-31"),
+            },
         )
         .await
         .expect("create building owner");
-        assert_eq!(first.name, "Deutsche Wohnbau SE");
+        assert_eq!(first.people[0].name, "Deutsche Wohnbau SE");
 
         // Owners of a building must tile its timeline: overlapping or gap
         // periods are rejected.
         let err = create_building_owner(
             &pool,
             &building.id,
-            "Bauverein Ost",
-            "bauverein@example.com",
-            "2000-06-01",
-            Some("2001-12-31"),
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Bauverein Ost",
+                    email: "bauverein@example.com",
+                    display_name: None,
+                }],
+                start_date: "2000-06-01",
+                end_date: Some("2001-12-31"),
+            },
         )
         .await
         .expect_err("overlapping building owner must be rejected");
@@ -2144,10 +2601,15 @@ mod tests {
         let err = create_building_owner(
             &pool,
             &building.id,
-            "Bauverein Ost",
-            "bauverein@example.com",
-            "2001-03-01",
-            Some("2005-12-31"),
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Bauverein Ost",
+                    email: "bauverein@example.com",
+                    display_name: None,
+                }],
+                start_date: "2001-03-01",
+                end_date: Some("2005-12-31"),
+            },
         )
         .await
         .expect_err("gapped building owner must be rejected");
@@ -2162,20 +2624,30 @@ mod tests {
         let second = create_building_owner(
             &pool,
             &building.id,
-            "Bauverein Ost",
-            "bauverein@example.com",
-            "2001-01-01",
-            Some("2005-12-31"),
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Bauverein Ost",
+                    email: "bauverein@example.com",
+                    display_name: None,
+                }],
+                start_date: "2001-01-01",
+                end_date: Some("2005-12-31"),
+            },
         )
         .await
         .expect("create tiled building owner");
         let third = create_building_owner(
             &pool,
             &building.id,
-            "Wohnen am Ring GmbH",
-            "verwaltung@wohnen-am-ring.example",
-            "2006-01-01",
-            None,
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Wohnen am Ring GmbH",
+                    email: "verwaltung@wohnen-am-ring.example",
+                    display_name: None,
+                }],
+                start_date: "2006-01-01",
+                end_date: None,
+            },
         )
         .await
         .expect("create open-ended building owner");
@@ -2193,14 +2665,19 @@ mod tests {
         let updated = update_building_owner(
             &pool,
             &first.id,
-            "Deutsche Wohnbau AG",
-            "service@deutsche-wohnbau.example",
-            "1995-01-01",
-            Some("2000-12-31"),
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Deutsche Wohnbau AG",
+                    email: "service@deutsche-wohnbau.example",
+                    display_name: None,
+                }],
+                start_date: "1995-01-01",
+                end_date: Some("2000-12-31"),
+            },
         )
         .await
         .expect("update building owner");
-        assert_eq!(updated.name, "Deutsche Wohnbau AG");
+        assert_eq!(updated.people[0].name, "Deutsche Wohnbau AG");
 
         // A period between two others cannot be deleted (no holes in the
         // chain); the first and the last period can.
@@ -2254,10 +2731,15 @@ mod tests {
         create_building_owner(
             &pool,
             &building.id,
-            "Deutsche Wohnbau SE",
-            "service@deutsche-wohnbau.example",
-            "1995-01-01",
-            None,
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Deutsche Wohnbau SE",
+                    email: "service@deutsche-wohnbau.example",
+                    display_name: None,
+                }],
+                start_date: "1995-01-01",
+                end_date: None,
+            },
         )
         .await
         .expect("create building owner");
@@ -2296,10 +2778,15 @@ mod tests {
         let err = create_ownership(
             &pool,
             &apt.id,
-            "Eigentümer GmbH",
-            "eigentuemer@example.com",
-            "2020-01-01",
-            None,
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Eigentümer GmbH",
+                    email: "eigentuemer@example.com",
+                    display_name: None,
+                }],
+                start_date: "2020-01-01",
+                end_date: None,
+            },
         )
         .await
         .expect_err("ownership in a building-owned apartment must be rejected");
@@ -2336,10 +2823,15 @@ mod tests {
         create_building_owner(
             &pool,
             &building.id,
-            "Deutsche Wohnbau SE",
-            "service@deutsche-wohnbau.example",
-            "1995-01-01",
-            None,
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Deutsche Wohnbau SE",
+                    email: "service@deutsche-wohnbau.example",
+                    display_name: None,
+                }],
+                start_date: "1995-01-01",
+                end_date: None,
+            },
         )
         .await
         .expect("create building owner");
@@ -2351,9 +2843,12 @@ mod tests {
             &building.id,
             "EG",
             "",
-            &NewOwner {
-                name: "Alice",
-                email: "alice@example.com",
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Alice",
+                    email: "alice@example.com",
+                    display_name: None,
+                }],
                 start_date: "2026-01-01",
                 end_date: None,
             },
@@ -2383,10 +2878,15 @@ mod tests {
         let err = create_ownership(
             &pool,
             &apt.id,
-            "Alice",
-            "alice@example.com",
-            "2026-01-01",
-            None,
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Alice",
+                    email: "alice@example.com",
+                    display_name: None,
+                }],
+                start_date: "2026-01-01",
+                end_date: None,
+            },
         )
         .await
         .expect_err("ownership added to a building-owned apartment must be rejected");
@@ -2413,11 +2913,12 @@ mod tests {
             &weg.id,
             "EG",
             "",
-            &NewOwner {
-                name: "Alice",
-                email: "alice@example.com",
-                // A closed, past period so the sole-row guard (and not the
-                // current-date guard) is the one that fires below.
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Alice",
+                    email: "alice@example.com",
+                    display_name: None,
+                }],
                 start_date: "2025-01-01",
                 end_date: Some("2025-12-31"),
             },
@@ -2438,10 +2939,15 @@ mod tests {
         let err = create_building_owner(
             &pool,
             &weg.id,
-            "Deutsche Wohnbau SE",
-            "service@deutsche-wohnbau.example",
-            "2026-01-01",
-            None,
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Deutsche Wohnbau SE",
+                    email: "service@deutsche-wohnbau.example",
+                    display_name: None,
+                }],
+                start_date: "2026-01-01",
+                end_date: None,
+            },
         )
         .await
         .expect_err("building owner in a WEG must be rejected");
@@ -2486,9 +2992,12 @@ mod tests {
             &building.id,
             "EG",
             "",
-            &NewOwner {
-                name: "Alice",
-                email: "alice@example.com",
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Alice",
+                    email: "alice@example.com",
+                    display_name: None,
+                }],
                 start_date: "2023-01-01",
                 end_date: Some("2023-12-31"),
             },
@@ -2500,9 +3009,12 @@ mod tests {
             &building.id,
             "OG",
             "",
-            &NewOwner {
-                name: "Alice Liddell",
-                email: "ALICE@example.com", // same person, different case
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Alice Liddell",
+                    email: "ALICE@example.com", // same person, different case
+                    display_name: None,
+                }],
                 start_date: "2024-01-01",
                 end_date: None,
             },
@@ -2512,10 +3024,15 @@ mod tests {
         create_building_owner(
             &pool,
             &owned_building.id,
-            "Alice Liddell",
-            "alice@example.com",
-            "2025-01-01",
-            None,
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Alice Liddell",
+                    email: "alice@example.com",
+                    display_name: None,
+                }],
+                start_date: "2025-01-01",
+                end_date: None,
+            },
         )
         .await
         .expect("create building owner");
@@ -2535,36 +3052,47 @@ mod tests {
             .await
             .expect("list ownerships");
         assert_eq!(owners.len(), 2);
-        assert!(owners.iter().all(|o| o.person_id == people[0].id));
+        assert!(owners.iter().all(|o| o
+            .people
+            .first()
+            .is_some_and(|p| p.person_id == people[0].id)));
         let building_owners = list_building_owners(&pool, &owned_building.id)
             .await
             .expect("list building owners");
         assert_eq!(building_owners.len(), 1);
-        assert_eq!(building_owners[0].person_id, people[0].id);
+        assert_eq!(building_owners[0].people[0].person_id, people[0].id);
 
         // Renaming the person through one period renames all periods at once:
         // the person's data is shared current contact data, not a snapshot.
         let updated = update_building_owner(
             &pool,
             &building_owners[0].id,
-            "Liddell Immobilien GmbH",
-            "alice@example.com",
-            "2025-01-01",
-            None,
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Liddell Immobilien GmbH",
+                    email: "alice@example.com",
+                    display_name: None,
+                }],
+                start_date: "2025-01-01",
+                end_date: None,
+            },
         )
         .await
         .expect("update building owner");
-        assert_eq!(updated.name, "Liddell Immobilien GmbH");
+        assert_eq!(updated.people[0].name, "Liddell Immobilien GmbH");
         let owners = list_ownerships_for_building(&pool, &building.id)
             .await
             .expect("list ownerships after rename");
-        assert!(owners
-            .iter()
-            .all(|o| o.name == "Liddell Immobilien GmbH" && o.person_id == people[0].id));
+        assert!(owners.iter().all(|o| {
+            o.people
+                .first()
+                .is_some_and(|p| p.name == "Liddell Immobilien GmbH" && p.person_id == people[0].id)
+        }));
         assert_eq!(
             list_building_owners(&pool, &owned_building.id)
                 .await
                 .expect("list building owners after rename")[0]
+                .people[0]
                 .name,
             "Liddell Immobilien GmbH"
         );
@@ -2575,19 +3103,24 @@ mod tests {
         let moved = update_ownership(
             &pool,
             &owners[1].id,
-            "Max Mustermann",
-            "max@example.com",
-            "2024-01-01",
-            None,
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Max Mustermann",
+                    email: "max@example.com",
+                    display_name: None,
+                }],
+                start_date: "2024-01-01",
+                end_date: None,
+            },
         )
         .await
         .expect("move ownership to another person");
-        assert_eq!(moved.name, "Max Mustermann");
+        assert_eq!(moved.people[0].name, "Max Mustermann");
         let people = list_people(&pool).await.expect("list people");
         assert_eq!(people.len(), 2);
         assert_ne!(people[0].id, people[1].id);
-        assert_eq!(owners[0].person_id, people[0].id);
-        assert_eq!(moved.person_id, people[1].id);
+        assert_eq!(owners[0].people[0].person_id, people[0].id);
+        assert_eq!(moved.people[0].person_id, people[1].id);
         let _ = apt;
         let _ = apt2;
     }
@@ -2613,9 +3146,12 @@ mod tests {
             &building.id,
             "EG",
             "",
-            &NewOwner {
-                name: "Ada",
-                email: "ada@example.com",
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Ada",
+                    email: "ada@example.com",
+                    display_name: None,
+                }],
                 start_date: "2023-01-01",
                 end_date: Some("2023-12-31"),
             },
@@ -2625,10 +3161,15 @@ mod tests {
         let bo = create_ownership(
             &pool,
             &apt.id,
-            "Bo",
-            "bo@example.com",
-            "2024-01-01",
-            Some("2024-12-31"),
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Bo",
+                    email: "bo@example.com",
+                    display_name: None,
+                }],
+                start_date: "2024-01-01",
+                end_date: Some("2024-12-31"),
+            },
         )
         .await
         .expect("create successor ownership");
@@ -2638,7 +3179,7 @@ mod tests {
             .await
             .expect("list ownerships")
             .into_iter()
-            .find(|o| o.name == "Ada")
+            .find(|o| o.people.iter().any(|p| p.name == "Ada"))
             .expect("Ada period")
             .id;
         assert!(delete_ownership(&pool, &ada_id)
@@ -2670,9 +3211,21 @@ mod tests {
         let other = create_building(&pool, "Other", "", "", "")
             .await
             .expect("create other building");
-        create_building_owner(&pool, &other.id, "Bo", "bo@example.com", "2020-01-01", None)
-            .await
-            .expect("create building owner for Bo");
+        create_building_owner(
+            &pool,
+            &other.id,
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Bo",
+                    email: "bo@example.com",
+                    display_name: None,
+                }],
+                start_date: "2020-01-01",
+                end_date: None,
+            },
+        )
+        .await
+        .expect("create building owner for Bo");
         assert!(delete_apartment(&pool, &apt.id)
             .await
             .expect("delete apartment"));
@@ -2702,9 +3255,12 @@ mod tests {
             &building.id,
             "EG",
             "",
-            &NewOwner {
-                name: "Alice",
-                email: "alice@example.com",
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Alice",
+                    email: "alice@example.com",
+                    display_name: None,
+                }],
                 start_date: "2026-01-01",
                 end_date: None,
             },
@@ -2735,7 +3291,7 @@ mod tests {
         let owners = list_ownerships(&pool, &apt.id)
             .await
             .expect("list ownerships");
-        assert_eq!(owners[0].person_id, alice.id);
+        assert_eq!(owners[0].people[0].person_id, alice.id);
         assert_eq!(tenancy.person_id, bob.id);
 
         // Renaming Bob through the tenancy keeps the single tenant person;
@@ -2745,6 +3301,7 @@ mod tests {
             &tenancy.id,
             "Bob Schiller",
             "bob@example.com",
+            None,
             "2026-02-01",
             None,
         )
@@ -2804,16 +3361,19 @@ mod tests {
             &building.id,
             "EG",
             "",
-            &NewOwner {
-                name: "Alice",
-                email: "alice@example.com",
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Alice",
+                    email: "alice@example.com",
+                    display_name: None,
+                }],
                 start_date: "2026-01-01",
                 end_date: None,
             },
         )
         .await
         .expect("create apartment");
-        create_tenancy(&pool, &apt.id, "Bob", "bob@example.com", "2026-02-01", None)
+        let tenancy = create_tenancy(&pool, &apt.id, "Bob", "bob@example.com", "2026-02-01", None)
             .await
             .expect("create tenancy");
         let alice = list_people(&pool)
@@ -2824,9 +3384,15 @@ mod tests {
             .expect("Alice person");
 
         // Rename/re-address the person directly; every joined view follows.
-        let updated = update_person(&pool, &alice.id, "Alice Liddell", "alice@liddell.example")
-            .await
-            .expect("update person");
+        let updated = update_person(
+            &pool,
+            &alice.id,
+            "Alice Liddell",
+            None,
+            "alice@liddell.example",
+        )
+        .await
+        .expect("update person");
         assert_eq!(updated.name, "Alice Liddell");
         assert_eq!(updated.email, "alice@liddell.example");
         let (_, admins) = get_building(&pool, &building.id)
@@ -2838,13 +3404,14 @@ mod tests {
             list_ownerships(&pool, &apt.id)
                 .await
                 .expect("list ownerships")[0]
+                .people[0]
                 .email,
             "alice@liddell.example"
         );
 
         // The e-mail is the person's identity: an address that already belongs
         // to another person is rejected (0009 trigger).
-        let err = update_person(&pool, &alice.id, "Alice Liddell", "bob@example.com")
+        let err = update_person(&pool, &alice.id, "Alice Liddell", None, "bob@example.com")
             .await
             .expect_err("duplicate e-mail must be rejected");
         assert!(err
@@ -2853,7 +3420,7 @@ mod tests {
             .message()
             .contains("ERR_PERSON_EMAIL_TAKEN"));
         // ...and so are malformed addresses and empty names (people triggers).
-        let err = update_person(&pool, &alice.id, "Alice Liddell", "no-at.example")
+        let err = update_person(&pool, &alice.id, "Alice Liddell", None, "no-at.example")
             .await
             .expect_err("malformed e-mail must be rejected");
         assert!(err
@@ -2861,7 +3428,7 @@ mod tests {
             .expect("database error")
             .message()
             .contains("ERR_EMAIL"));
-        let err = update_person(&pool, &alice.id, "  ", "alice@liddell.example")
+        let err = update_person(&pool, &alice.id, "  ", None, "alice@liddell.example")
             .await
             .expect_err("empty name must be rejected");
         assert!(err
@@ -2879,8 +3446,272 @@ mod tests {
 
         // Unknown ids yield RowNotFound.
         assert!(matches!(
-            update_person(&pool, "does-not-exist", "X", "x@example.com").await,
+            update_person(&pool, "does-not-exist", "X", None, "x@example.com").await,
             Err(sqlx::Error::RowNotFound)
         ));
+
+        // A display name given through the tenancy edit replaces the tenant's
+        // name everywhere; `None` (a legacy form without the field) leaves it
+        // untouched, and an empty value clears it again.
+        let shown = update_tenancy(
+            &pool,
+            &tenancy.id,
+            "Bob",
+            "bob@example.com",
+            Some("Familie Bob"),
+            "2026-02-01",
+            None,
+        )
+        .await
+        .expect("set tenancy display name");
+        assert_eq!(shown.effective_name(), "Familie Bob");
+
+        let untouched = update_tenancy(
+            &pool,
+            &tenancy.id,
+            "Bob",
+            "bob@example.com",
+            None,
+            "2026-02-01",
+            None,
+        )
+        .await
+        .expect("update tenancy without display name");
+        assert_eq!(untouched.display_name.as_deref(), Some("Familie Bob"));
+
+        let cleared = update_tenancy(
+            &pool,
+            &tenancy.id,
+            "Bob",
+            "bob@example.com",
+            Some(""),
+            "2026-02-01",
+            None,
+        )
+        .await
+        .expect("clear tenancy display name");
+        assert_eq!(cleared.display_name, None);
+    }
+
+    #[tokio::test]
+    async fn ownership_period_can_have_multiple_people() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory");
+
+        migrate(&pool).await.expect("migrate");
+        let building = create_building(&pool, "Test Building", "", "Alice", "alice@example.com")
+            .await
+            .expect("create building");
+        let apt = create_apartment(
+            &pool,
+            &building.id,
+            "EG",
+            "",
+            &NewPeriod {
+                people: &[
+                    NewPerson {
+                        name: "Anna",
+                        email: "anna@example.com",
+                        display_name: None,
+                    },
+                    NewPerson {
+                        name: "Ben",
+                        email: "ben@example.com",
+                        display_name: None,
+                    },
+                ],
+                start_date: "2025-01-01",
+                end_date: None,
+            },
+        )
+        .await
+        .expect("create apartment with two owners");
+
+        // Both owners are listed in submission order, and the joined label
+        // reads like the UI shows it.
+        let owners = list_ownerships(&pool, &apt.id)
+            .await
+            .expect("list ownerships");
+        assert_eq!(owners.len(), 1);
+        assert_eq!(owners[0].people.len(), 2);
+        assert_eq!(owners[0].people[0].name, "Anna");
+        assert_eq!(owners[0].people[1].name, "Ben");
+        assert_eq!(owners[0].label(), "Anna & Ben");
+        assert_eq!(list_people(&pool).await.expect("list people").len(), 3);
+
+        // Updating the period replaces the person set: add Carol, drop Anna.
+        let updated = update_ownership(
+            &pool,
+            &owners[0].id,
+            &NewPeriod {
+                people: &[
+                    NewPerson {
+                        name: "Ben",
+                        email: "ben@example.com",
+                        display_name: None,
+                    },
+                    NewPerson {
+                        name: "Carol",
+                        email: "carol@example.com",
+                        display_name: None,
+                    },
+                ],
+                start_date: "2025-01-01",
+                end_date: None,
+            },
+        )
+        .await
+        .expect("update owner set");
+        assert_eq!(updated.label(), "Ben & Carol");
+        // Anna lost her only reference and is cleaned up automatically.
+        let people = list_people(&pool).await.expect("list people after update");
+        assert_eq!(people.len(), 3);
+        assert!(
+            !people.iter().any(|p| p.email == "anna@example.com"),
+            "orphaned Anna must be removed, got {people:?}"
+        );
+
+        // Removing the last person of a period is rejected (guard of 0013).
+        let err = update_ownership(
+            &pool,
+            &owners[0].id,
+            &NewPeriod {
+                people: &[],
+                start_date: "2025-01-01",
+                end_date: None,
+            },
+        )
+        .await
+        .expect_err("person-less ownership must be rejected");
+        assert!(err
+            .as_database_error()
+            .expect("database error")
+            .message()
+            .contains("ERR_OWNERSHIP_REQUIRES_PERSON"));
+
+        // A building owner supports the same multi-person model.
+        let owned = create_building(&pool, "Owned Block", "", "", "")
+            .await
+            .expect("create wholly-owned building");
+        let bo = create_building_owner(
+            &pool,
+            &owned.id,
+            &NewPeriod {
+                people: &[
+                    NewPerson {
+                        name: "Birgit",
+                        email: "birgit@example.com",
+                        display_name: None,
+                    },
+                    NewPerson {
+                        name: "Bodo",
+                        email: "bodo@example.com",
+                        display_name: None,
+                    },
+                    NewPerson {
+                        name: "Berta",
+                        email: "berta@example.com",
+                        display_name: None,
+                    },
+                ],
+                start_date: "2025-01-01",
+                end_date: None,
+            },
+        )
+        .await
+        .expect("create building owner with three people");
+        assert_eq!(bo.label(), "Birgit, Bodo & Berta");
+        // The roles listing knows each of them as a building owner.
+        for email in [
+            "birgit@example.com",
+            "bodo@example.com",
+            "berta@example.com",
+        ] {
+            let rows = list_person_roles(&pool, None)
+                .await
+                .expect("list person roles");
+            assert!(
+                rows.iter()
+                    .any(|r| r.kind == "building_owner" && r.person_email == email),
+                "{email} must appear as building owner, got {rows:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn display_name_overrides_the_name_everywhere() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory");
+
+        migrate(&pool).await.expect("migrate");
+        let building = create_building(&pool, "Test Building", "", "Alice", "alice@example.com")
+            .await
+            .expect("create building");
+        let apt = create_apartment(
+            &pool,
+            &building.id,
+            "EG",
+            "",
+            &NewPeriod {
+                people: &[NewPerson {
+                    name: "Anna Mustermann",
+                    email: "anna@example.com",
+                    display_name: None,
+                }],
+                start_date: "2025-01-01",
+                end_date: None,
+            },
+        )
+        .await
+        .expect("create apartment");
+
+        // Without a display name the person's name is shown.
+        let owners = list_ownerships(&pool, &apt.id)
+            .await
+            .expect("list ownerships");
+        assert_eq!(owners[0].label(), "Anna Mustermann");
+        assert_eq!(owners[0].people[0].effective_name(), "Anna Mustermann");
+
+        // Setting the display name on the person flips every rendered name.
+        let anna = list_people(&pool)
+            .await
+            .expect("list people")
+            .into_iter()
+            .find(|p| p.email == "anna@example.com")
+            .expect("Anna person");
+        update_person(
+            &pool,
+            &anna.id,
+            "Anna Mustermann",
+            Some("Familie Mustermann"),
+            "anna@example.com",
+        )
+        .await
+        .expect("set display name");
+        let person = get_person(&pool, &anna.id)
+            .await
+            .expect("get person")
+            .expect("Anna exists");
+        assert_eq!(person.effective_name(), "Familie Mustermann");
+        let owners = list_ownerships(&pool, &apt.id)
+            .await
+            .expect("list ownerships after rename");
+        assert_eq!(owners[0].label(), "Familie Mustermann");
+
+        // An empty display name counts as unset and falls back to the name.
+        update_person(&pool, &anna.id, "Anna Mustermann", None, "anna@example.com")
+            .await
+            .expect("clear display name");
+        let owners = list_ownerships(&pool, &apt.id)
+            .await
+            .expect("list ownerships after clearing");
+        assert_eq!(owners[0].label(), "Anna Mustermann");
+        let _ = building;
     }
 }

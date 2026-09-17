@@ -52,19 +52,27 @@
       </label>
       <div id="building-owner-fields"{% if ownership_style != "building" %} class="hidden"{% endif %}>
         <p class="muted">{{ ui.t("buildings.owner_help") }}</p>
-        <label class="field">
-          Name
-          <input type="text" name="owner_name" id="building-owner-name" list="people-names"
-                 data-email-field="building-owner-email" value="{{ owner_name }}" />
-        </label>
-        <label class="field">
-          {{ ui.t("form.email") }}
-          <input type="email" name="owner_email" id="building-owner-email" list="people-emails"
-                 value="{{ owner_email }}" />
-        </label>
+        <div class="person-rows" data-scope="building-owner">
+          {% for p in owner.people %}
+          <div class="person-row">
+            <label class="field">
+              Name
+              <input type="text" name="person_{{ loop.index }}_name" list="people-names"
+                     data-email-field="building-owner-email-{{ loop.index }}" value="{{ p.name }}" />
+            </label>
+            <label class="field">
+              {{ ui.t("form.email") }}
+              <input type="email" name="person_{{ loop.index }}_email" id="building-owner-email-{{ loop.index }}"
+                     list="people-emails" value="{{ p.email }}" />
+            </label>
+            <button type="button" class="btn btn-secondary btn-sm person-row-remove">{{ ui.t("owners.remove_person") }}</button>
+          </div>
+          {% endfor %}
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm person-row-add">{{ ui.t("owners.add_person") }}</button>
         <label class="field">
           {{ ui.t("form.ownership_from") }}
-          <input type="date" name="owner_start_date" value="{{ owner_start_date }}" />
+          <input type="date" name="owner_start_date" value="{{ owner.start_date }}" />
         </label>
       </div>
     </fieldset>

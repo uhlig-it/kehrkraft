@@ -37,8 +37,8 @@
     <tbody>
     {% for o in ownerships %}
       <tr>
-        <td data-label="Name"><a href="/admin/people/{{ o.person_id }}">{{ o.name }}</a></td>
-        <td data-label="{{ ui.t("table.email") }}">{{ o.email }}</td>
+        <td data-label="Name">{% for p in o.people %}{% if !loop.first %}{% if loop.last %} & {% else %}, {% endif %}{% endif %}<a href="/admin/people/{{ p.person_id }}">{{ p.effective_name() }}</a>{% endfor %}</td>
+        <td data-label="{{ ui.t("table.email") }}">{% for p in o.people %}{% if !loop.first %}, {% endif %}{{ p.email }}{% endfor %}</td>
         <td data-label="{{ ui.t("table.start") }}">{{ o.start_date }}</td>
         <td data-label="{{ ui.t("table.end") }}">{% if o.end_date.is_some() %}{{ o.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>
         <td class="col-actions">
@@ -68,16 +68,24 @@
     {% endif %}
     <p class="muted">{{ ui.t("suggestions.help") }}</p>
     <form method="post" action="/admin/buildings/{{ building.id }}/apartments/{{ apartment.id }}/ownerships">
-      <label class="field">
-        Name
-        <input type="text" name="name" id="owner-add-name" list="people-names"
-               data-email-field="owner-add-email" value="{% if let Some(f) = owner_form %}{{ f.name }}{% endif %}" required />
-      </label>
-      <label class="field">
-        {{ ui.t("form.email") }}
-        <input type="email" name="email" id="owner-add-email" list="people-emails"
-               value="{% if let Some(f) = owner_form %}{{ f.email }}{% endif %}" required />
-      </label>
+      <div class="person-rows" data-scope="owner-add">
+        {% for p in owner_people %}
+        <div class="person-row">
+          <label class="field">
+            Name
+            <input type="text" name="person_{{ loop.index }}_name" list="people-names"
+                   data-email-field="owner-add-email-{{ loop.index }}" value="{{ p.name }}" required />
+          </label>
+          <label class="field">
+            {{ ui.t("form.email") }}
+            <input type="email" name="person_{{ loop.index }}_email" id="owner-add-email-{{ loop.index }}"
+                   list="people-emails" value="{{ p.email }}" required />
+          </label>
+          <button type="button" class="btn btn-secondary btn-sm person-row-remove">{{ ui.t("owners.remove_person") }}</button>
+        </div>
+        {% endfor %}
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm person-row-add">{{ ui.t("owners.add_person") }}</button>
       <label class="field">
         {{ ui.t("form.ownership_from") }}
         <input type="date" name="start_date" value="{% if let Some(f) = owner_form %}{{ f.start_date }}{% endif %}" required />
@@ -122,7 +130,7 @@
     <tbody>
     {% for t in tenancies %}
       <tr>
-        <td data-label="Name"><a href="/admin/people/{{ t.person_id }}">{{ t.name }}</a></td>
+        <td data-label="Name"><a href="/admin/people/{{ t.person_id }}">{{ t.effective_name() }}</a></td>
         <td data-label="{{ ui.t("table.email") }}">{{ t.email }}</td>
         <td data-label="{{ ui.t("table.start") }}">{{ t.start_date }}</td>
         <td data-label="{{ ui.t("table.end") }}">{% if t.end_date.is_some() %}{{ t.end_date.as_ref().unwrap() }}{% else %}-{% endif %}</td>

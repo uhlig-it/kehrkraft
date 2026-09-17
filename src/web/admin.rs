@@ -81,9 +81,7 @@ pub struct BuildingsNewTemplate {
     pub ownership_style: String,
     /// Optional initial building owner, collected in the same form so a
     /// wholly-owned building needs no separate owner-creation step.
-    pub owner_name: String,
-    pub owner_email: String,
-    pub owner_start_date: String,
+    pub owner: OwnerInput,
     /// Known owners, offered as suggestions on the name/e-mail fields.
     pub people: Vec<Person>,
     pub ui: Ui,
@@ -216,10 +214,7 @@ pub struct ApartmentsNewTemplate {
     /// Initial owner of the apartment, collected in the same form because an
     /// apartment must always have at least one ownership record (unless a
     /// building owner covers it).
-    pub owner_name: String,
-    pub owner_email: String,
-    pub owner_start_date: String,
-    pub owner_end_date: Option<String>,
+    pub owner: OwnerInput,
     /// Known owners, offered as suggestions on the name/e-mail fields.
     pub people: Vec<Person>,
     pub ui: Ui,
@@ -246,8 +241,11 @@ pub struct ApartmentsShowTemplate {
     pub ownerships: Vec<Ownership>,
     pub tenancies: Vec<Tenancy>,
     pub error: Option<String>,
+    /// Person rows of the "Add Owner" form; at least one row (empty values
+    /// on a fresh page).
+    pub owner_people: Vec<PersonInput>,
     /// Submitted values, preserved when an "Add Owner" submission fails.
-    pub owner_form: Option<OwnershipForm>,
+    pub owner_form: Option<OwnerInput>,
     /// Submitted values, preserved when an "Add Tenant" submission fails.
     pub tenant_form: Option<TenancyForm>,
     /// Shown above the owner form when the new ownership would start before
@@ -284,7 +282,7 @@ pub struct OwnershipsEditTemplate {
     pub ownership: Ownership,
     pub error: Option<String>,
     /// Input values: the record's values, or the submitted ones after a failed update.
-    pub form: OwnershipForm,
+    pub form: OwnerInput,
     /// Shown above the form when the submitted end date would drop today's
     /// coverage: we ask whether the end date shall really be set.
     pub end_warning: Option<EndDateWarning>,
@@ -310,28 +308,186 @@ pub struct TenanciesEditTemplate {
 
 // --- Buildings ---
 
-#[derive(serde::Deserialize)]
-pub struct CreateBuildingForm {
+/// One person submitted by an owner form: name and e-mail, resolved to a
+/// person by the queries layer (identity by e-mail).
+#[derive(Clone, Debug, Default)]
+pub struct PersonInput {
     pub name: String,
-    pub description: String,
-    pub admin_name: String,
-    pub admin_email: String,
-    /// Visual choice of the ownership structure: "apartments" (each flat
-    /// gets its own owner, WEG) or "building" (one person/company owns the
-    /// whole building). `#[serde(default)]` keeps older clients that omit
-    /// the field working; missing means the apartments variant, i.e. no
-    /// building owner.
-    #[serde(default)]
-    pub ownership_style: String,
-    /// Owner fields of the "building" variant; when the style is
-    /// "apartments", they are ignored. `#[serde(default)]` keeps older
-    /// clients that omit the fields working.
-    #[serde(default)]
-    pub owner_name: String,
-    #[serde(default)]
-    pub owner_email: String,
-    #[serde(default)]
-    pub owner_start_date: String,
+    pub email: String,
+    /// Optional display name of the person (empty = unset). Only the edit
+    /// forms render the field; the creation forms keep it empty, and the
+    /// queries layer only applies it when the corresponding form key was
+    /// submitted (see [`OwnerInput::display_names_submitted`]).
+    pub display_name: String,
+}
+
+/// The owner fields of the ownership/building-owner forms: one or more
+/// persons plus the period's dates and the confirmation answers.
+#[derive(Clone, Debug, Default)]
+pub struct OwnerInput {
+    pub people: Vec<PersonInput>,
+    pub start_date: String,
+    pub end_date: Option<String>,
+    /// Whether the form submitted display-name fields (`person_{n}_display_name`
+    /// or a legacy plain `display_name`). The edit forms render those fields
+    /// (pre-filled with the current display names), the creation forms do not;
+    /// when they are absent, existing display names must be left untouched.
+    pub display_names_submitted: bool,
+    /// "yes"/"no" answer to the question whether the previous ownership
+    /// shall end on the day before the new one begins. Absent on the first
+    /// submission; only present when the confirmation form was shown.
+    pub close_previous: Option<String>,
+    /// "yes"/"no" answer to the question whether the end date shall really be
+    /// set before today (the apartment would lose its covering owner). Absent
+    /// on the first submission; only present when the warning was shown.
+    pub confirm_end: Option<String>,
+}
+
+impl OwnerInput {
+    /// The people as the queries layer expects them, borrowing the form's
+    /// values. Fully blank rows (the empty row a fresh form renders) are
+    /// dropped, so the queries layer only ever sees submitted people; empty
+    /// when the form had none.
+    pub fn new_people(&self) -> Vec<queries::NewPerson<'_>> {
+        self.people
+            .iter()
+            .filter(|p| !(p.name.trim().is_empty() && p.email.trim().is_empty()))
+            .map(|p| queries::NewPerson {
+                name: &p.name,
+                email: &p.email,
+                display_name: if self.display_names_submitted {
+                    Some(&p.display_name)
+                } else {
+                    None
+                },
+            })
+            .collect()
+    }
+
+    /// The submitted period (people + dates) for the queries layer; `None`
+    /// when no person rows were submitted. The `people` list must be the one
+    /// returned by [`new_people`] and stay alive as long as the period is
+    /// used.
+    pub fn new_period<'a>(
+        &'a self,
+        people: &'a [queries::NewPerson<'a>],
+    ) -> Option<queries::NewPeriod<'a>> {
+        if people.is_empty() {
+            None
+        } else {
+            Some(queries::NewPeriod {
+                people,
+                start_date: &self.start_date,
+                end_date: normalize_end_date(self.end_date.as_deref()),
+            })
+        }
+    }
+}
+
+/// Ensure an owner form always has at least one person row to render.
+fn seed_person_rows(people: &mut Vec<PersonInput>) {
+    if people.is_empty() {
+        people.push(PersonInput::default());
+    }
+}
+
+/// The value of the first form pair with key `key`, or "".
+fn form_value<'a>(pairs: &'a [(String, String)], key: &str) -> &'a str {
+    pairs
+        .iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("")
+}
+
+/// Parse the person fields of an owner form body: repeated
+/// `person_{n}_name`/`person_{n}_email`/`person_{n}_display_name` pairs (the
+/// rows rendered by the templates; any indexes, gaps allowed, blank rows
+/// dropped). For backward compatibility, a single person in the fields
+/// `legacy_name`/`legacy_email` is used when no indexed fields are present
+/// (older clients, tests).
+fn parse_people_fields(
+    pairs: &[(String, String)],
+    legacy_name: &str,
+    legacy_email: &str,
+) -> Vec<PersonInput> {
+    let mut by_index: std::collections::BTreeMap<usize, PersonInput> =
+        std::collections::BTreeMap::new();
+    for (key, value) in pairs {
+        if let Some(rest) = key.strip_prefix("person_") {
+            if let Some(index) = rest
+                .strip_suffix("_name")
+                .and_then(|s| s.parse::<usize>().ok())
+            {
+                by_index.entry(index).or_default().name = value.clone();
+            } else if let Some(index) = rest
+                .strip_suffix("_email")
+                .and_then(|s| s.parse::<usize>().ok())
+            {
+                by_index.entry(index).or_default().email = value.clone();
+            } else if let Some(index) = rest
+                .strip_suffix("_display_name")
+                .and_then(|s| s.parse::<usize>().ok())
+            {
+                by_index.entry(index).or_default().display_name = value.clone();
+            }
+        }
+    }
+    if !by_index.is_empty() {
+        return by_index
+            .into_values()
+            .filter(|p| !(p.name.trim().is_empty() && p.email.trim().is_empty()))
+            .collect();
+    }
+    let name = form_value(pairs, legacy_name);
+    let email = form_value(pairs, legacy_email);
+    if name.is_empty() && email.is_empty() {
+        Vec::new()
+    } else {
+        vec![PersonInput {
+            name: name.to_string(),
+            email: email.to_string(),
+            display_name: form_value(pairs, "display_name").to_string(),
+        }]
+    }
+}
+
+/// Whether the form body submitted display-name fields: any
+/// `person_{n}_display_name` key or the legacy plain `display_name` key. Only
+/// the edit forms render them; creation forms and legacy clients do not, and
+/// then existing display names must stay untouched.
+fn display_names_submitted(pairs: &[(String, String)]) -> bool {
+    pairs.iter().any(|(key, _)| {
+        key == "display_name" || (key.starts_with("person_") && key.ends_with("_display_name"))
+    })
+}
+
+/// Parse the owner fields of an ownership/building-owner form: the persons
+/// and the period's dates plus confirmation answers. Legacy forms post a
+/// single `name`/`email` pair.
+fn parse_owner_input(pairs: &[(String, String)]) -> OwnerInput {
+    OwnerInput {
+        people: parse_people_fields(pairs, "name", "email"),
+        start_date: form_value(pairs, "start_date").to_string(),
+        end_date: normalize_end_date(Some(form_value(pairs, "end_date"))).map(str::to_string),
+        display_names_submitted: display_names_submitted(pairs),
+        close_previous: {
+            let v = form_value(pairs, "close_previous");
+            if v.is_empty() {
+                None
+            } else {
+                Some(v.to_string())
+            }
+        },
+        confirm_end: {
+            let v = form_value(pairs, "confirm_end");
+            if v.is_empty() {
+                None
+            } else {
+                Some(v.to_string())
+            }
+        },
+    }
 }
 
 /// Form data of the "edit building" page. The Ansprechpartner fields are
@@ -386,6 +542,8 @@ pub async fn buildings_new(State(pool): State<Db>, ui: Ui) -> impl axum::respons
         Ok(p) => p,
         Err(err) => return err.into_response(),
     };
+    let mut owner = OwnerInput::default();
+    seed_person_rows(&mut owner.people);
     render(BuildingsNewTemplate {
         title: i18n::msg(ui.lang, "buildings.new_title"),
         error: None,
@@ -394,9 +552,7 @@ pub async fn buildings_new(State(pool): State<Db>, ui: Ui) -> impl axum::respons
         admin_name: String::new(),
         admin_email: String::new(),
         ownership_style: "apartments".to_string(),
-        owner_name: String::new(),
-        owner_email: String::new(),
-        owner_start_date: String::new(),
+        owner,
         people,
         ui,
     })
@@ -405,16 +561,36 @@ pub async fn buildings_new(State(pool): State<Db>, ui: Ui) -> impl axum::respons
 pub async fn buildings_create(
     State(pool): State<Db>,
     ui: Ui,
-    Form(form): Form<CreateBuildingForm>,
+    RawForm(body): RawForm,
 ) -> impl axum::response::IntoResponse {
+    let pairs: Vec<(String, String)> = form_urlencoded::parse(&body)
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    let name = form_value(&pairs, "name").to_string();
+    let description = form_value(&pairs, "description").to_string();
+    let admin_name = form_value(&pairs, "admin_name").to_string();
+    let admin_email = form_value(&pairs, "admin_email").to_string();
     // The ownership structure chosen on the form decides whether the owner
     // fields apply: "apartments" (the default, also for legacy clients)
     // creates a WEG-style building without an owner.
-    let owner_input = if form.ownership_style == "building" {
-        if form.owner_name.trim().is_empty()
-            && form.owner_email.trim().is_empty()
-            && form.owner_start_date.trim().is_empty()
-        {
+    let ownership_style = form_value(&pairs, "ownership_style").to_string();
+    let mut owner = OwnerInput {
+        people: parse_people_fields(&pairs, "owner_name", "owner_email"),
+        start_date: form_value(&pairs, "owner_start_date").to_string(),
+        end_date: None,
+        display_names_submitted: false,
+        close_previous: None,
+        confirm_end: None,
+    };
+    let has_owner_input = owner
+        .people
+        .iter()
+        .any(|p| !(p.name.trim().is_empty() && p.email.trim().is_empty()));
+    seed_person_rows(&mut owner.people);
+    let owner_people = owner.new_people();
+
+    let period: Option<queries::NewPeriod<'_>> = if ownership_style == "building" {
+        if !has_owner_input && owner.start_date.trim().is_empty() {
             let people = match load_people(&pool, ui).await {
                 Ok(p) => p,
                 Err(err) => return err.into_response(),
@@ -422,48 +598,34 @@ pub async fn buildings_create(
             return render_bad_request(BuildingsNewTemplate {
                 title: i18n::msg(ui.lang, "buildings.new_title"),
                 error: Some(i18n::msg(ui.lang, "buildings.owner_required").to_string()),
-                name: form.name,
-                description: form.description,
-                admin_name: form.admin_name,
-                admin_email: form.admin_email,
-                ownership_style: form.ownership_style,
-                owner_name: form.owner_name,
-                owner_email: form.owner_email,
-                owner_start_date: form.owner_start_date,
+                name,
+                description,
+                admin_name,
+                admin_email,
+                ownership_style,
+                owner,
                 people,
                 ui,
             });
         }
-        Some(queries::NewOwner {
-            name: &form.owner_name,
-            email: &form.owner_email,
-            start_date: &form.owner_start_date,
-            end_date: None,
-        })
+        owner.new_period(&owner_people)
     } else {
         None
     };
-    let result = match owner_input {
-        Some(owner) => {
+    let result = match &period {
+        Some(period) => {
             queries::create_building_with_owner(
                 &pool,
-                &form.name,
-                &form.description,
-                &form.admin_name,
-                &form.admin_email,
-                &owner,
+                &name,
+                &description,
+                &admin_name,
+                &admin_email,
+                period,
             )
             .await
         }
         None => {
-            queries::create_building(
-                &pool,
-                &form.name,
-                &form.description,
-                &form.admin_name,
-                &form.admin_email,
-            )
-            .await
+            queries::create_building(&pool, &name, &description, &admin_name, &admin_email).await
         }
     };
     match result {
@@ -477,14 +639,12 @@ pub async fn buildings_create(
                 render_bad_request(BuildingsNewTemplate {
                     title: i18n::msg(ui.lang, "buildings.new_title"),
                     error: Some(msg),
-                    name: form.name,
-                    description: form.description,
-                    admin_name: form.admin_name,
-                    admin_email: form.admin_email,
-                    ownership_style: form.ownership_style,
-                    owner_name: form.owner_name,
-                    owner_email: form.owner_email,
-                    owner_start_date: form.owner_start_date,
+                    name,
+                    description,
+                    admin_name,
+                    admin_email,
+                    ownership_style,
+                    owner,
                     people,
                     ui,
                 })
@@ -779,27 +939,6 @@ pub async fn buildings_rotation_seed_update(
 
 // --- Apartments ---
 
-/// Form data of the "new apartment" page: besides name and description it
-/// collects the initial owner, because the database requires an ownership
-/// record to exist from the moment the apartment is created. The owner
-/// fields are not rendered when the building has a building owner (the
-/// apartment then belongs to the building as a whole, and the database
-/// rejects such an ownership anyway, see 0010); `#[serde(default)]` keeps
-/// clients without the hidden fields working.
-#[derive(serde::Deserialize)]
-pub struct CreateApartmentForm {
-    pub name: String,
-    pub description: String,
-    #[serde(default)]
-    pub owner_name: String,
-    #[serde(default)]
-    pub owner_email: String,
-    #[serde(default)]
-    pub owner_start_date: String,
-    #[serde(default)]
-    pub owner_end_date: Option<String>,
-}
-
 /// Form data of the "edit apartment" page. Only name and description are
 /// edited there; owners are managed separately on the apartment page, so this
 /// form deliberately has no owner fields.
@@ -901,6 +1040,17 @@ async fn load_apartment_show(
     })
 }
 
+/// The person rows of the add-owner form: the submitted ones, or a single
+/// empty row on a fresh page.
+fn owner_form_people(owner_form: &Option<OwnerInput>) -> Vec<PersonInput> {
+    let mut people = owner_form
+        .as_ref()
+        .map(|f| f.people.clone())
+        .unwrap_or_default();
+    seed_person_rows(&mut people);
+    people
+}
+
 /// Re-render the apartment page with an inline error, preserving the submitted
 /// form values. Used when an "Add Owner"/"Add Tenant" submission fails.
 async fn render_apartment_show_error(
@@ -908,7 +1058,7 @@ async fn render_apartment_show_error(
     building_id: &str,
     apartment_id: &str,
     error: String,
-    owner_form: Option<OwnershipForm>,
+    owner_form: Option<OwnerInput>,
     tenant_form: Option<TenancyForm>,
     ui: Ui,
 ) -> axum::response::Response {
@@ -920,6 +1070,7 @@ async fn render_apartment_show_error(
             ownerships: parts.ownerships,
             tenancies: parts.tenancies,
             error: Some(error),
+            owner_people: owner_form_people(&owner_form),
             owner_form,
             tenant_form,
             owner_confirmation: None,
@@ -942,7 +1093,7 @@ async fn render_apartment_show_confirmation(
     apartment_id: &str,
     owner_confirmation: Option<OwnershipConfirmation>,
     tenant_confirmation: Option<TenancyConfirmation>,
-    owner_form: Option<OwnershipForm>,
+    owner_form: Option<OwnerInput>,
     tenant_form: Option<TenancyForm>,
     ui: Ui,
 ) -> axum::response::Response {
@@ -954,6 +1105,7 @@ async fn render_apartment_show_confirmation(
             ownerships: parts.ownerships,
             tenancies: parts.tenancies,
             error: None,
+            owner_people: owner_form_people(&owner_form),
             owner_form,
             tenant_form,
             owner_confirmation,
@@ -990,6 +1142,8 @@ pub async fn apartments_new(
         .await
         .map(|owner| owner.is_some())
         .unwrap_or(false);
+    let mut owner = OwnerInput::default();
+    seed_person_rows(&mut owner.people);
     render(ApartmentsNewTemplate {
         title: i18n::msg(ui.lang, "apartments.new"),
         building,
@@ -997,10 +1151,7 @@ pub async fn apartments_new(
         name: String::new(),
         description: String::new(),
         has_building_owner,
-        owner_name: String::new(),
-        owner_email: String::new(),
-        owner_start_date: String::new(),
-        owner_end_date: None,
+        owner,
         people,
         ui,
     })
@@ -1010,8 +1161,23 @@ pub async fn apartments_create(
     Path(building_id): Path<String>,
     State(pool): State<Db>,
     ui: Ui,
-    Form(form): Form<CreateApartmentForm>,
+    RawForm(body): RawForm,
 ) -> impl axum::response::IntoResponse {
+    let pairs: Vec<(String, String)> = form_urlencoded::parse(&body)
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    let name = form_value(&pairs, "name").to_string();
+    let description = form_value(&pairs, "description").to_string();
+    let mut owner = OwnerInput {
+        people: parse_people_fields(&pairs, "owner_name", "owner_email"),
+        start_date: form_value(&pairs, "owner_start_date").to_string(),
+        end_date: normalize_end_date(Some(form_value(&pairs, "owner_end_date")))
+            .map(str::to_string),
+        display_names_submitted: false,
+        close_previous: None,
+        confirm_end: None,
+    };
+    seed_person_rows(&mut owner.people);
     // When the building has a building owner, the owner fields are optional:
     // an empty owner form creates an apartment that belongs to the building
     // owner. Otherwise the first owner is required (the database rejects an
@@ -1020,34 +1186,24 @@ pub async fn apartments_create(
         .await
         .map(|owner| owner.is_some())
         .unwrap_or(false);
-    let end_opt = normalize_end_date(form.owner_end_date.as_deref());
-    let owner_input = if has_building_owner
-        && form.owner_name.trim().is_empty()
-        && form.owner_email.trim().is_empty()
-        && form.owner_start_date.trim().is_empty()
+    let owner_people = owner.new_people();
+    let owner_period = if has_building_owner
+        && owner
+            .people
+            .iter()
+            .all(|p| p.name.trim().is_empty() && p.email.trim().is_empty())
+        && owner.start_date.trim().is_empty()
     {
         None
     } else {
-        Some(queries::NewOwner {
-            name: &form.owner_name,
-            email: &form.owner_email,
-            start_date: &form.owner_start_date,
-            end_date: end_opt,
-        })
+        owner.new_period(&owner_people)
     };
-    let result = match owner_input {
-        Some(owner) => {
-            queries::create_apartment(&pool, &building_id, &form.name, &form.description, &owner)
-                .await
+    let result = match &owner_period {
+        Some(period) => {
+            queries::create_apartment(&pool, &building_id, &name, &description, period).await
         }
         None => {
-            queries::create_apartment_building_owned(
-                &pool,
-                &building_id,
-                &form.name,
-                &form.description,
-            )
-            .await
+            queries::create_apartment_building_owned(&pool, &building_id, &name, &description).await
         }
     };
     match result {
@@ -1070,13 +1226,10 @@ pub async fn apartments_create(
                     title: i18n::msg(ui.lang, "apartments.new"),
                     building,
                     error: Some(msg),
-                    name: form.name,
-                    description: form.description,
+                    name,
+                    description,
                     has_building_owner,
-                    owner_name: form.owner_name,
-                    owner_email: form.owner_email,
-                    owner_start_date: form.owner_start_date,
-                    owner_end_date: form.owner_end_date,
+                    owner,
                     people,
                     ui,
                 })
@@ -1150,6 +1303,7 @@ pub async fn apartments_show(
                 ownerships,
                 tenancies,
                 error: None,
+                owner_people: vec![PersonInput::default()],
                 owner_form: None,
                 tenant_form: None,
                 owner_confirmation: None,
@@ -1362,24 +1516,6 @@ fn end_drops_today_coverage(
     covers_today && new_end.is_some_and(|d| d < today)
 }
 
-#[derive(serde::Deserialize)]
-pub struct OwnershipForm {
-    pub name: String,
-    pub email: String,
-    pub start_date: String,
-    pub end_date: Option<String>,
-    /// "yes"/"no" answer to the question whether the previous ownership
-    /// shall end on the day before the new one begins. Absent on the first
-    /// submission; only present when the confirmation form was shown.
-    #[serde(default)]
-    pub close_previous: Option<String>,
-    /// "yes"/"no" answer to the question whether the end date shall really be
-    /// set before today (the apartment would lose its covering owner). Absent
-    /// on the first submission; only present when the warning was shown.
-    #[serde(default)]
-    pub confirm_end: Option<String>,
-}
-
 fn normalize_end_date(end_date: Option<&str>) -> Option<&str> {
     end_date.map(str::trim).filter(|s| !s.is_empty())
 }
@@ -1390,7 +1526,7 @@ async fn ownership_created(
     pool: &Db,
     building_id: &str,
     apartment_id: &str,
-    form: OwnershipForm,
+    form: OwnerInput,
     result: Result<Ownership, sqlx::Error>,
     ui: Ui,
 ) -> axum::response::Response {
@@ -1425,12 +1561,17 @@ pub async fn ownerships_create(
     Path((building_id, apartment_id)): Path<(String, String)>,
     State(pool): State<Db>,
     ui: Ui,
-    Form(form): Form<OwnershipForm>,
+    RawForm(body): RawForm,
 ) -> impl axum::response::IntoResponse {
     if let Err(err) = load_apartment_owned_by(&pool, &building_id, &apartment_id, ui).await {
         return err.into_response();
     }
-    let end_opt = normalize_end_date(form.end_date.as_deref());
+    let pairs: Vec<(String, String)> = form_urlencoded::parse(&body)
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    let mut form = parse_owner_input(&pairs);
+    seed_person_rows(&mut form.people);
+    let people = form.new_people();
 
     // If the new ownership would start while the previous one is still current
     // (it does not already end on the day before), the database rejects the
@@ -1445,15 +1586,21 @@ pub async fn ownerships_create(
             Some(d) => d,
             None => {
                 // Unparseable start date: the database reports it.
-                let result = queries::create_ownership(
-                    &pool,
-                    &apartment_id,
-                    &form.name,
-                    &form.email,
-                    &form.start_date,
-                    end_opt,
-                )
-                .await;
+                let result = match form.new_period(&people) {
+                    Some(period) => queries::create_ownership(&pool, &apartment_id, &period).await,
+                    None => {
+                        return render_apartment_show_error(
+                            &pool,
+                            &building_id,
+                            &apartment_id,
+                            i18n::msg(ui.lang, "ownership.people_required").to_string(),
+                            Some(form),
+                            None,
+                            ui,
+                        )
+                        .await
+                    }
+                };
                 return ownership_created(&pool, &building_id, &apartment_id, form, result, ui)
                     .await;
             }
@@ -1465,7 +1612,7 @@ pub async fn ownerships_create(
                     &building_id,
                     &apartment_id,
                     Some(OwnershipConfirmation {
-                        previous_name: prev.name,
+                        previous_name: prev.label(),
                         previous_end: prev_end,
                         new_start: form.start_date.clone(),
                     }),
@@ -1477,19 +1624,32 @@ pub async fn ownerships_create(
                 .await
             }
             Some("yes") => {
-                let result = queries::create_ownership_closing_previous(
-                    &pool,
-                    &apartment_id,
-                    queries::PreviousPeriod {
-                        id: &prev.id,
-                        end_date: &prev_end,
-                    },
-                    &form.name,
-                    &form.email,
-                    &form.start_date,
-                    end_opt,
-                )
-                .await;
+                let result = match form.new_period(&people) {
+                    Some(period) => {
+                        queries::create_ownership_closing_previous(
+                            &pool,
+                            &apartment_id,
+                            queries::PreviousPeriod {
+                                id: &prev.id,
+                                end_date: &prev_end,
+                            },
+                            &period,
+                        )
+                        .await
+                    }
+                    None => {
+                        return render_apartment_show_error(
+                            &pool,
+                            &building_id,
+                            &apartment_id,
+                            i18n::msg(ui.lang, "ownership.people_required").to_string(),
+                            Some(form),
+                            None,
+                            ui,
+                        )
+                        .await
+                    }
+                };
                 return ownership_created(&pool, &building_id, &apartment_id, form, result, ui)
                     .await;
             }
@@ -1503,7 +1663,7 @@ pub async fn ownerships_create(
                     i18n::msgf(
                         ui.lang,
                         "ownership.decline_close",
-                        &[prev.name.as_str(), prev_end.as_str()],
+                        &[prev.label().as_str(), prev_end.as_str()],
                     ),
                     Some(form),
                     None,
@@ -1546,15 +1706,21 @@ pub async fn ownerships_create(
 
     // No previous ownership covering the new start (the chain is already
     // tiled): create directly; the database enforces the remaining rules.
-    let result = queries::create_ownership(
-        &pool,
-        &apartment_id,
-        &form.name,
-        &form.email,
-        &form.start_date,
-        end_opt,
-    )
-    .await;
+    let result = match form.new_period(&people) {
+        Some(period) => queries::create_ownership(&pool, &apartment_id, &period).await,
+        None => {
+            return render_apartment_show_error(
+                &pool,
+                &building_id,
+                &apartment_id,
+                i18n::msg(ui.lang, "ownership.people_required").to_string(),
+                Some(form),
+                None,
+                ui,
+            )
+            .await
+        }
+    };
     ownership_created(&pool, &building_id, &apartment_id, form, result, ui).await
 }
 
@@ -1584,13 +1750,21 @@ pub async fn ownerships_edit(
                 Ok(p) => p,
                 Err(err) => return err.into_response(),
             };
-            let form = OwnershipForm {
-                name: ownership.name.clone(),
-                email: ownership.email.clone(),
+            let form = OwnerInput {
+                people: ownership
+                    .people
+                    .iter()
+                    .map(|p| PersonInput {
+                        name: p.name.clone(),
+                        email: p.email.clone(),
+                        display_name: p.display_name.clone().unwrap_or_default(),
+                    })
+                    .collect(),
                 start_date: ownership.start_date.clone(),
                 end_date: ownership.end_date.clone(),
                 close_previous: None,
                 confirm_end: None,
+                display_names_submitted: true,
             };
             render(OwnershipsEditTemplate {
                 title: i18n::msg(ui.lang, "ownership.edit_title").to_string(),
@@ -1625,7 +1799,7 @@ async fn render_ownership_edit_error(
     apartment: &Apartment,
     ownership: &Ownership,
     error: String,
-    form: OwnershipForm,
+    form: OwnerInput,
     ui: Ui,
 ) -> axum::response::Response {
     let building = match load_building(pool, building_id, ui).await {
@@ -1686,7 +1860,7 @@ async fn render_ownership_edit_warning(
     building_id: &str,
     apartment: &Apartment,
     ownership: &Ownership,
-    form: OwnershipForm,
+    form: OwnerInput,
     end_warning: EndDateWarning,
     ui: Ui,
 ) -> axum::response::Response {
@@ -1715,7 +1889,7 @@ pub async fn ownerships_update(
     Path((building_id, apartment_id, ownership_id)): Path<(String, String, String)>,
     State(pool): State<Db>,
     ui: Ui,
-    Form(form): Form<OwnershipForm>,
+    RawForm(body): RawForm,
 ) -> impl axum::response::IntoResponse {
     let apartment = match load_apartment_owned_by(&pool, &building_id, &apartment_id, ui).await {
         Ok(a) => a,
@@ -1742,6 +1916,12 @@ pub async fn ownerships_update(
         }
     };
 
+    let pairs: Vec<(String, String)> = form_urlencoded::parse(&body)
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    let mut form = parse_owner_input(&pairs);
+    seed_person_rows(&mut form.people);
+    let people = form.new_people();
     let end_opt = normalize_end_date(form.end_date.as_deref());
 
     // Setting the end date of the currently-covering period before today would
@@ -1773,16 +1953,22 @@ pub async fn ownerships_update(
 
     // Field checks and chain tiling are enforced by the database (triggers);
     // its rejection message is shown inline.
-    match queries::update_ownership(
-        &pool,
-        &ownership_id,
-        &form.name,
-        &form.email,
-        &form.start_date,
-        end_opt,
-    )
-    .await
-    {
+    let result = match form.new_period(&people) {
+        Some(period) => queries::update_ownership(&pool, &ownership_id, &period).await,
+        None => {
+            return render_ownership_edit_error(
+                &pool,
+                &building_id,
+                &apartment,
+                &ownership,
+                i18n::msg(ui.lang, "ownership.people_required").to_string(),
+                form,
+                ui,
+            )
+            .await
+        }
+    };
+    match result {
         Ok(_) => Redirect::to(&format!(
             "/admin/buildings/{building_id}/apartments/{apartment_id}"
         ))
@@ -1864,6 +2050,13 @@ pub async fn ownerships_delete(
 pub struct TenancyForm {
     pub name: String,
     pub email: String,
+    /// Optional display name of the person, shown instead of `name` wherever
+    /// the person is displayed; an empty submitted value clears it. `None`
+    /// when the form was rendered without the field (tenancy creation, or a
+    /// request without it, e.g. from a legacy client): the person's display
+    /// name is then left untouched.
+    #[serde(default)]
+    pub display_name: Option<String>,
     pub start_date: String,
     pub end_date: Option<String>,
     /// "yes"/"no" answer to the question whether the previous tenancy shall
@@ -1954,7 +2147,7 @@ pub async fn tenancies_create(
                     &apartment_id,
                     None,
                     Some(TenancyConfirmation {
-                        previous_name: prev.name,
+                        previous_name: prev.effective_name(),
                         previous_end: prev_end,
                         new_start: form.start_date.clone(),
                     }),
@@ -1990,7 +2183,7 @@ pub async fn tenancies_create(
                     i18n::msgf(
                         ui.lang,
                         "tenancy.decline_close",
-                        &[prev.name.as_str(), prev_end.as_str()],
+                        &[prev.effective_name().as_str(), prev_end.as_str()],
                     ),
                     None,
                     Some(form),
@@ -2044,6 +2237,7 @@ pub async fn tenancies_edit(
             let form = TenancyForm {
                 name: tenancy.name.clone(),
                 email: tenancy.email.clone(),
+                display_name: tenancy.display_name.clone(),
                 start_date: tenancy.start_date.clone(),
                 end_date: tenancy.end_date.clone(),
                 close_previous: None,
@@ -2143,6 +2337,7 @@ pub async fn tenancies_update(
         &tenancy_id,
         &form.name,
         &form.email,
+        form.display_name.as_deref(),
         &form.start_date,
         end_opt,
     )
@@ -2239,6 +2434,10 @@ pub struct PeopleShowTemplate {
 #[derive(serde::Deserialize)]
 pub struct PersonForm {
     pub name: String,
+    /// Optional display name shown instead of `name` wherever the person is
+    /// displayed; empty means unset.
+    #[serde(default)]
+    pub display_name: String,
     pub email: String,
 }
 
@@ -2462,7 +2661,7 @@ async fn render_person_page(
         }
     };
     let template = PeopleShowTemplate {
-        title: person.name.clone(),
+        title: person.effective_name(),
         person,
         roles,
         error,
@@ -2504,6 +2703,7 @@ pub async fn people_show(
         None,
         PersonForm {
             name: person.name.clone(),
+            display_name: person.display_name.clone().unwrap_or_default(),
             email: person.email.clone(),
         },
         false,
@@ -2520,7 +2720,15 @@ pub async fn people_update(
 ) -> impl axum::response::IntoResponse {
     // Name/e-mail format and the unique e-mail identity are enforced by the
     // database (triggers on `people`); its rejection message is shown inline.
-    match queries::update_person(&pool, &person_id, &form.name, &form.email).await {
+    match queries::update_person(
+        &pool,
+        &person_id,
+        &form.name,
+        Some(&form.display_name),
+        &form.email,
+    )
+    .await
+    {
         Ok(_) => Redirect::to(&format!("/admin/people/{person_id}")).into_response(),
         Err(err) => match db_message(&err, ui) {
             Some(msg) => render_person_page(&pool, &person_id, Some(msg), form, true, ui).await,
@@ -2531,25 +2739,6 @@ pub async fn people_update(
                 .into_response(),
         },
     }
-}
-
-/// Form data of the building-owner add/edit forms.
-#[derive(serde::Deserialize)]
-pub struct BuildingOwnerForm {
-    pub name: String,
-    pub email: String,
-    pub start_date: String,
-    pub end_date: Option<String>,
-    /// "yes"/"no" answer to the question whether the previous building owner
-    /// shall end on the day before the new one begins. Absent on the first
-    /// submission; only present when the confirmation form was shown.
-    #[serde(default)]
-    pub close_previous: Option<String>,
-    /// "yes"/"no" answer to the question whether the end date shall really be
-    /// set before today (the building would lose its covering owner). Absent
-    /// on the first submission; only present when the warning was shown.
-    #[serde(default)]
-    pub confirm_end: Option<String>,
 }
 
 /// The question asked when adding a building owner would start before the
@@ -2569,7 +2758,7 @@ pub struct BuildingOwnerFormTemplate {
     pub title: String,
     pub building: Building,
     pub error: Option<String>,
-    pub form: BuildingOwnerForm,
+    pub form: OwnerInput,
     /// Shown above the form when the new building owner would start before the
     /// previous one ends: we ask whether the previous period shall end the day
     /// before the new one begins.
@@ -2602,7 +2791,7 @@ fn building_owner_form_template(
     title: String,
     building: Building,
     notice: Option<BuildingOwnerFormNotice>,
-    form: BuildingOwnerForm,
+    form: OwnerInput,
     building_id: &str,
     owner_id: Option<&str>,
     people: Vec<Person>,
@@ -2653,18 +2842,13 @@ pub async fn building_owners_new(
         Ok(p) => p,
         Err(err) => return err.into_response(),
     };
+    let mut form = OwnerInput::default();
+    seed_person_rows(&mut form.people);
     render(building_owner_form_template(
         i18n::msg(ui.lang, "building_owner.new_title").to_string(),
         building,
         None,
-        BuildingOwnerForm {
-            name: String::new(),
-            email: String::new(),
-            start_date: String::new(),
-            end_date: None,
-            close_previous: None,
-            confirm_end: None,
-        },
+        form,
         &building_id,
         None,
         people,
@@ -2677,7 +2861,7 @@ pub async fn building_owners_new(
 async fn building_owner_created(
     pool: &Db,
     building_id: &str,
-    form: BuildingOwnerForm,
+    form: OwnerInput,
     result: Result<BuildingOwner, sqlx::Error>,
     ui: Ui,
 ) -> axum::response::Response {
@@ -2713,16 +2897,52 @@ async fn building_owner_created(
     }
 }
 
+/// Re-render the building-owner form saying that at least one person must be
+/// given. Used when the owner form is submitted without any person rows.
+async fn building_owner_people_required(
+    pool: &Db,
+    building_id: &str,
+    form: OwnerInput,
+    ui: Ui,
+) -> axum::response::Response {
+    match load_building(pool, building_id, ui).await {
+        Ok(building) => {
+            let people = match load_people(pool, ui).await {
+                Ok(p) => p,
+                Err(err) => return err.into_response(),
+            };
+            render_bad_request(building_owner_form_template(
+                i18n::msg(ui.lang, "building_owner.new_title").to_string(),
+                building,
+                Some(BuildingOwnerFormNotice::Error(
+                    i18n::msg(ui.lang, "building_owner.people_required").to_string(),
+                )),
+                form,
+                building_id,
+                None,
+                people,
+                ui,
+            ))
+        }
+        Err(err) => err.into_response(),
+    }
+}
+
 pub async fn building_owners_create(
     Path(building_id): Path<String>,
     State(pool): State<Db>,
     ui: Ui,
-    Form(form): Form<BuildingOwnerForm>,
+    RawForm(body): RawForm,
 ) -> impl axum::response::IntoResponse {
     if let Err(err) = load_building(&pool, &building_id, ui).await {
         return err.into_response();
     }
-    let end_opt = normalize_end_date(form.end_date.as_deref());
+    let pairs: Vec<(String, String)> = form_urlencoded::parse(&body)
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    let mut form = parse_owner_input(&pairs);
+    seed_person_rows(&mut form.people);
+    let people = form.new_people();
 
     // If the new building owner would start while the previous one is still
     // current (it does not already end on the day before), the database
@@ -2738,15 +2958,14 @@ pub async fn building_owners_create(
             Some(d) => d,
             None => {
                 // Unparseable start date: the database reports it.
-                let result = queries::create_building_owner(
-                    &pool,
-                    &building_id,
-                    &form.name,
-                    &form.email,
-                    &form.start_date,
-                    end_opt,
-                )
-                .await;
+                let result = match form.new_period(&people) {
+                    Some(period) => {
+                        queries::create_building_owner(&pool, &building_id, &period).await
+                    }
+                    None => {
+                        return building_owner_people_required(&pool, &building_id, form, ui).await
+                    }
+                };
                 return building_owner_created(&pool, &building_id, form, result, ui).await;
             }
         };
@@ -2766,7 +2985,7 @@ pub async fn building_owners_create(
                     building,
                     Some(BuildingOwnerFormNotice::Confirmation(
                         BuildingOwnerConfirmation {
-                            previous_name: prev.name,
+                            previous_name: prev.label(),
                             previous_end: prev_end,
                             new_start,
                         },
@@ -2779,19 +2998,23 @@ pub async fn building_owners_create(
                 ));
             }
             Some("yes") => {
-                let result = queries::create_building_owner_closing_previous(
-                    &pool,
-                    &building_id,
-                    queries::PreviousPeriod {
-                        id: &prev.id,
-                        end_date: &prev_end,
-                    },
-                    &form.name,
-                    &form.email,
-                    &form.start_date,
-                    end_opt,
-                )
-                .await;
+                let result = match form.new_period(&people) {
+                    Some(period) => {
+                        queries::create_building_owner_closing_previous(
+                            &pool,
+                            &building_id,
+                            queries::PreviousPeriod {
+                                id: &prev.id,
+                                end_date: &prev_end,
+                            },
+                            &period,
+                        )
+                        .await
+                    }
+                    None => {
+                        return building_owner_people_required(&pool, &building_id, form, ui).await
+                    }
+                };
                 return building_owner_created(&pool, &building_id, form, result, ui).await;
             }
             _ => {
@@ -2811,7 +3034,7 @@ pub async fn building_owners_create(
                     Some(BuildingOwnerFormNotice::Error(i18n::msgf(
                         ui.lang,
                         "building_owner.decline_close",
-                        &[prev.name.as_str(), prev_end.as_str()],
+                        &[prev.label().as_str(), prev_end.as_str()],
                     ))),
                     form,
                     &building_id,
@@ -2863,15 +3086,10 @@ pub async fn building_owners_create(
 
     // No previous building owner covering the new start (the chain is already
     // tiled): create directly; the database enforces the remaining rules.
-    let result = queries::create_building_owner(
-        &pool,
-        &building_id,
-        &form.name,
-        &form.email,
-        &form.start_date,
-        end_opt,
-    )
-    .await;
+    let result = match form.new_period(&people) {
+        Some(period) => queries::create_building_owner(&pool, &building_id, &period).await,
+        None => return building_owner_people_required(&pool, &building_id, form, ui).await,
+    };
     building_owner_created(&pool, &building_id, form, result, ui).await
 }
 
@@ -2897,13 +3115,21 @@ pub async fn building_owners_edit(
                 Ok(p) => p,
                 Err(err) => return err.into_response(),
             };
-            let form = BuildingOwnerForm {
-                name: owner.name.clone(),
-                email: owner.email.clone(),
+            let form = OwnerInput {
+                people: owner
+                    .people
+                    .iter()
+                    .map(|p| PersonInput {
+                        name: p.name.clone(),
+                        email: p.email.clone(),
+                        display_name: p.display_name.clone().unwrap_or_default(),
+                    })
+                    .collect(),
                 start_date: owner.start_date.clone(),
                 end_date: owner.end_date.clone(),
                 close_previous: None,
                 confirm_end: None,
+                display_names_submitted: true,
             };
             render(building_owner_form_template(
                 i18n::msg(ui.lang, "building_owner.edit_title").to_string(),
@@ -2961,7 +3187,7 @@ pub async fn building_owners_update(
     Path((building_id, owner_id)): Path<(String, String)>,
     State(pool): State<Db>,
     ui: Ui,
-    Form(form): Form<BuildingOwnerForm>,
+    RawForm(body): RawForm,
 ) -> impl axum::response::IntoResponse {
     if let Err(err) = load_building(&pool, &building_id, ui).await {
         return err.into_response();
@@ -2986,6 +3212,12 @@ pub async fn building_owners_update(
                 .into_response()
         }
     };
+    let pairs: Vec<(String, String)> = form_urlencoded::parse(&body)
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    let mut form = parse_owner_input(&pairs);
+    seed_person_rows(&mut form.people);
+    let people = form.new_people();
     let end_opt = normalize_end_date(form.end_date.as_deref());
 
     // Setting the end date of the currently-covering period before today would
@@ -3026,16 +3258,32 @@ pub async fn building_owners_update(
 
     // Field checks and chain tiling are enforced by the database (triggers);
     // its rejection message is shown inline.
-    match queries::update_building_owner(
-        &pool,
-        &owner_id,
-        &form.name,
-        &form.email,
-        &form.start_date,
-        end_opt,
-    )
-    .await
-    {
+    let result = match form.new_period(&people) {
+        Some(period) => queries::update_building_owner(&pool, &owner_id, &period).await,
+        None => {
+            let building = match load_building(&pool, &building_id, ui).await {
+                Ok(b) => b,
+                Err(err) => return err.into_response(),
+            };
+            let people = match load_people(&pool, ui).await {
+                Ok(p) => p,
+                Err(err) => return err.into_response(),
+            };
+            return render_bad_request(building_owner_form_template(
+                i18n::msg(ui.lang, "building_owner.edit_title").to_string(),
+                building,
+                Some(BuildingOwnerFormNotice::Error(
+                    i18n::msg(ui.lang, "building_owner.people_required").to_string(),
+                )),
+                form,
+                &building_id,
+                Some(&owner_id),
+                people,
+                ui,
+            ));
+        }
+    };
+    match result {
         Ok(_) => Redirect::to(&format!("/admin/buildings/{building_id}")).into_response(),
         Err(err) => match db_message(&err, ui) {
             Some(msg) => {

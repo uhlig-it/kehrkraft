@@ -662,6 +662,25 @@ details.disclosure form {
   display: none !important;
 }
 
+/* Repeatable person rows of the owner forms: name and e-mail side by side
+   with the per-row remove button; the row-remove button hides when only one
+   row remains (the JS toggles `hidden`). */
+.person-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  column-gap: 0.75rem;
+  align-items: end;
+  margin-bottom: 0.25rem;
+}
+
+.person-row-remove {
+  white-space: nowrap;
+}
+
+.person-rows + .person-row-add {
+  margin-bottom: 0.9rem;
+}
+
 /* The people index lists each person's roles; the e-mail column is only
    shown when the viewport has room for it. */
 .email-if-space {

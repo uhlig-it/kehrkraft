@@ -49,6 +49,75 @@
           emailField.value = picked[0].dataset.email || '';
         }
       });
+
+      // Person rows of the owner forms (repeatable name/e-mail pairs): the
+      // "add person" button appends a row, the per-row remove button drops
+      // one; the last remaining row cannot be removed.
+      document.addEventListener('click', (event) => {
+        const addBtn = event.target.closest('.person-row-add');
+        if (addBtn) {
+          // The button sits next to (not inside) the row list, so locate
+          // the .person-rows container on its own.
+          const rowsEl =
+            addBtn.closest('.person-rows') ||
+            addBtn.parentElement?.querySelector('.person-rows');
+          if (rowsEl) {
+            personRowAppend(rowsEl);
+            personRowsRefresh(rowsEl);
+          }
+          return;
+        }
+        const rowsEl = event.target.closest('.person-rows');
+        if (!rowsEl) return;
+        const row = event.target.closest('.person-row');
+        if (event.target.closest('.person-row-remove') && row) {
+          row.remove();
+          personRowsRefresh(rowsEl);
+        }
+      });
+
+      function nextPersonIndex(rowsEl) {
+        let max = 0;
+        rowsEl.querySelectorAll('[name^="person_"]').forEach((input) => {
+          const match = input.name.match(/^person_(\d+)_(?:name|email|display_name)$/);
+          if (match) max = Math.max(max, Number(match[1]));
+        });
+        return max + 1;
+      }
+
+      function personRowAppend(rowsEl) {
+        const template = rowsEl.querySelector('.person-row');
+        if (!template) return;
+        const scope = rowsEl.dataset.scope || 'person';
+        const index = nextPersonIndex(rowsEl);
+        const clone = template.cloneNode(true);
+        const nameInput = clone.querySelector('[name$="_name"]');
+        const displayInput = clone.querySelector('[name$="_display_name"]');
+        const emailInput = clone.querySelector('[name$="_email"]');
+        clone.querySelectorAll('input').forEach((input) => { input.value = ''; });
+        if (nameInput) nameInput.name = `person_${index}_name`;
+        if (displayInput) displayInput.name = `person_${index}_display_name`;
+        if (emailInput) emailInput.name = `person_${index}_email`;
+        if (emailInput) {
+          const id = `${scope}-email-${index}`;
+          emailInput.id = id;
+          if (nameInput) nameInput.dataset.emailField = id;
+        }
+        rowsEl.appendChild(clone);
+      }
+
+      function personRowsRefresh(rowsEl) {
+        const rows = rowsEl.querySelectorAll('.person-row');
+        const canRemove = rows.length > 1;
+        rows.forEach((rowEl) => {
+          const button = rowEl.querySelector('.person-row-remove');
+          if (button) button.hidden = !canRemove;
+        });
+      }
+
+      document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('.person-rows').forEach(personRowsRefresh);
+      });
     </script>
   </body>
 </html>

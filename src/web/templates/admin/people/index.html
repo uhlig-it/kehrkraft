@@ -27,7 +27,7 @@
     {% for e in entries %}
       <tr>
         <td data-label="Name">
-          <a href="/admin/people/{{ e.person.id }}">{{ e.person.name }}</a>
+          <a href="/admin/people/{{ e.person.id }}">{{ e.person.effective_name() }}</a>
           {% if e.roles_summary.len() > 0 %}
           <span class="muted person-roles-summary">{{ e.roles_summary }}</span>
           {% endif %}
