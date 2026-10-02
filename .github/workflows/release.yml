@@ -75,3 +75,9 @@ jobs:
         with:
           files: artifacts/*.tar.gz
           body_path: release-notes.md
+  deploy:
+    needs: release
+    uses: uhlig-it/infrastructure/.github/workflows/deploy.yml@main
+    with:
+      service: kehrkraft
+    secrets: inherit
