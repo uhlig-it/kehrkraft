@@ -2,12 +2,19 @@
 
 [advisories]
 ignore = [
+  # RUSTSEC-2026-0387: timing variability in constant-time operations in
+  # crypto-bigint 0.5.5.
+  #
+  # Reminder to remove this entry: https://github.com/uhlig-it/kehrkraft/issues/31
+  #
   # crypto-bigint 0.5.5 is pinned by elliptic-curve 0.13 via age -> p256 0.13.
   # The first fixed release, 0.7.6, is a semver-major bump that age 0.12.1 (the
   # newest release) does not accept, so this cannot be resolved without an
   # upstream age release. Not reachable here: we only use age's passphrase API
   # (Encryptor::with_user_passphrase and scrypt::Identity), while p256 and thus
-  # crypto-bigint are only exercised by age's p256tag recipient code.
-  # Revisit when age moves to p256 0.14 / crypto-bigint 0.7.
+  # crypto-bigint are only exercised by age's p256tag recipient.
+  #
+  # Tracked upstream in https://github.com/str4d/rage/pull/648, which moves p256
+  # to 0.14 and crypto-bigint to 0.7.6.
   "RUSTSEC-2026-0387",
 ]
