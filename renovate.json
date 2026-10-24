@@ -1,35 +1,22 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended"
-  ],
+  "extends": ["config:recommended"],
   "rebaseWhen": "behind-base-branch",
-  "labels": [
-    "dependencies"
-  ],
+  "labels": ["dependencies"],
   "minimumReleaseAge": "3 days",
   "packageRules": [
     {
       "description": "Auto-merge patch updates to Cargo dependencies and the pinned Rust toolchain (rust-toolchain.toml) after required CI checks pass.",
-      "matchManagers": [
-        "cargo",
-        "rust-toolchain"
-      ],
-      "matchUpdateTypes": [
-        "patch"
-      ],
+      "matchManagers": ["cargo", "rust-toolchain"],
+      "matchUpdateTypes": ["patch"],
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": true
     },
     {
       "description": "GitHub Actions are pinned to commit SHAs; auto-merge digest updates, which stay on the same major/minor tag (the trailing comment shows the tag). Digest updates do not reliably carry a release timestamp, so the global minimumReleaseAge would keep them pending forever; skip it (CI validates the change).",
-      "matchManagers": [
-        "github-actions"
-      ],
-      "matchUpdateTypes": [
-        "digest"
-      ],
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["digest"],
       "minimumReleaseAge": "0",
       "automerge": true,
       "automergeType": "pr",
@@ -37,21 +24,14 @@
     },
     {
       "description": "Our own image is rebuilt on every push to main, so a new digest appears faster than the stability window; skip minimumReleaseAge for it (it is already validated by CI).",
-      "matchPackageNames": [
-        "ghcr.io/uhlig-it/kehrkraft"
-      ],
+      "matchPackageNames": ["ghcr.io/uhlig-it/kehrkraft"],
       "minimumReleaseAge": "0"
     },
     {
       "description": "Require human review for potentially breaking dependency updates.",
-      "matchUpdateTypes": [
-        "minor",
-        "major"
-      ],
+      "matchUpdateTypes": ["minor", "major"],
       "automerge": false,
-      "assignees": [
-        "suhlig"
-      ]
+      "assignees": ["suhlig"]
     }
   ]
 }
