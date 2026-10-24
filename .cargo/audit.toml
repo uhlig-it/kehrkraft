@@ -1,0 +1,13 @@
+# cargo-audit configuration, also picked up by rustsec/audit-check in CI.
+
+[advisories]
+ignore = [
+  # crypto-bigint 0.5.5 is pinned by elliptic-curve 0.13 via age -> p256 0.13.
+  # The first fixed release, 0.7.6, is a semver-major bump that age 0.12.1 (the
+  # newest release) does not accept, so this cannot be resolved without an
+  # upstream age release. Not reachable here: we only use age's passphrase API
+  # (Encryptor::with_user_passphrase and scrypt::Identity), while p256 and thus
+  # crypto-bigint are only exercised by age's p256tag recipient code.
+  # Revisit when age moves to p256 0.14 / crypto-bigint 0.7.
+  "RUSTSEC-2026-0387",
+]
