@@ -17,4 +17,26 @@ ignore = [
   # Tracked upstream in https://github.com/str4d/rage/pull/648, which moves p256
   # to 0.14 and crypto-bigint to 0.7.6.
   "RUSTSEC-2026-0387",
+
+  # RUSTSEC-2026-0459: SQLite before 3.54.0 returns uninitialized page-cache
+  # memory when the database is opened together with a sibling -wal file whose
+  # page size differs from the database's (CVE-2026-119375, libsqlite3-sys
+  # 0.30.1).
+  #
+  # Reminder to remove this entry: https://github.com/uhlig-it/kehrkraft/issues/36
+  #
+  # sqlx-sqlite 0.9.0, the newest release, requires libsqlite3-sys
+  # ">=0.30.1, <0.38.0", while the advisory is fixed in 0.39.0 (SQLite 3.54.0,
+  # shipped with rusqlite 0.41). Every version sqlx accepts is affected, and
+  # sqlx's main branch still pins 0.37.0, so no released combination clears
+  # this. Dropping the bundled SQLite would not help either: cargo-audit flags
+  # the crate version, not the feature set.
+  #
+  # Not reachable here: only a process that opens a database file together with
+  # a -wal file written by a less trusted party is exposed, i.e. an attacker
+  # needs write access to the directory holding kehrkraft.db. Such an attacker
+  # can tamper with the database itself, so this adds no new capability. The
+  # database is an app-owned file (src/db/mod.rs) that the app switches to WAL
+  # mode itself (src/backup/mod.rs); no third-party database files are opened.
+  "RUSTSEC-2026-0459",
 ]
