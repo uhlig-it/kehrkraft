@@ -1,0 +1,33 @@
+# Migrated from .tmuxinator.yml (tmuxinator -> smug).
+#
+# Notes:
+# - on_project_start became before_start.
+# - startup_window: kehrkraft became selected: true on the same window.
+# - startup_pane: 2 has no smug equivalent, but smug leaves the last created
+#   pane active, which is the shell pane that tmuxinator focused.
+# - Relative roots (. and ../...) resolve against the directory smug is run
+#   from, which is how the tmuxinator config worked too.
+session: kehrkraft
+attach: true
+
+before_start:
+  - zed . ../kehrkraft-deployment ../ansible-role-simple-systemd-service
+
+windows:
+  - name: kehrkraft
+    root: .
+    layout: main-vertical
+    selected: true
+    commands:
+      - cargo watch -x test
+    panes:
+      - type: vertical
+        commands:
+          - cargo watch -x run
+      - type: vertical
+        commands:
+          - zsh
+  - name: deployment
+    root: ../kehrkraft-deployment
+  - name: simple-systemd-service
+    root: ../ansible-role-simple-systemd-service
