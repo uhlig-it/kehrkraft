@@ -10,9 +10,6 @@
 session: kehrkraft
 attach: true
 
-before_start:
-  - zed . ../kehrkraft-deployment ../ansible-role-simple-systemd-service
-
 windows:
   - name: kehrkraft
     root: .
@@ -28,6 +25,6 @@ windows:
         commands:
           - zsh
   - name: deployment
-    root: ../kehrkraft-deployment
+    root: ~/git/github.com/uhlig-it/infrastructure
   - name: simple-systemd-service
-    root: ../ansible-role-simple-systemd-service
+    root: ~/git/github.com/uhlig-it/ansible-role-simple-systemd-service
